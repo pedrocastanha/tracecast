@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  python:
+    name: Python Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        working-directory: packages/tracecast-py
+        run: pip install -e ".[all]" pytest
+
+      - name: Run tests
+        working-directory: packages/tracecast-py
+        run: python -m pytest tests/ -v --tb=short
+
+  typescript:
+    name: TypeScript Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        working-directory: packages/tracecast-ts
+        run: npm ci
+
+      - name: Build
+        working-directory: packages/tracecast-ts
+        run: npx tsc
+
+      - name: Run tests
+        working-directory: packages/tracecast-ts
+        run: npx jest --verbose
