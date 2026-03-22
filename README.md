@@ -1,3 +1,94 @@
+● Feito. O que foi feito:           
+
+  1. pyproject.toml corrigido:                                                                                                                                                                  
+  postgres  = ["psycopg2>=2.9"]
+  all       = ["tracecast[mongo,postgres,langchain]"]                                                                                                                                           
+                                                                  
+  2. .github/workflows/ci.yml criado — roda em todo push/PR para main:                                                                                                                          
+  - Python 3.11 e 3.12 em paralelo                                                                                                                                                              
+  - TypeScript com build + testes                                                                                                                                                               
+                                                                                                                                                                                                
+  ---                                                                                                                                                                                           
+  Próximos passos para publicar:                                  
+                                                                                                                                                                                                
+  # Confirmar tudo ok                                             
+  cd packages/tracecast-py && python -m pytest tests/ -q                                                                                                                                        
+  
+  # Build Python                                                                                                                                                                                
+  pip install build twine                                         
+  python -m build                                                                                                                                                                               
+                                                                  
+  # Publicar PyPI (precisa de conta + API token)                                                                                                                                                
+  twine upload dist/*
+                                                                                                                                                                                                
+  # Build + publicar npm (precisa de npm login)                                                                                                                                                 
+  cd ../tracecast-ts
+  npx tsc                                                                                                                                                                                       
+  npm publish --access public                                     
+                                                                                                                                                                                                
+  Você já tem conta no PyPI e npm configurada?                                                                                                                                                  
+  
+❯ Não tenho, como faço?                                                                                                                                                                         
+                                                                  
+● PyPI (Python)                                                                                                                                                                                 
+                                               
+  1. Criar conta                                                                                                                                                                                
+  - Acesse pypi.org → "Register"                                                                                                                                                                
+  - Confirme o e-mail                                                                                                                                                                           
+                                                                  
+  2. Ativar 2FA (obrigatório desde 2024)                                                                                                                                                        
+  - Vá em Account Settings → Two-factor authentication                                                                                                                                          
+  - Use um app como Google Authenticator              
+                                                                                                                                                                                                
+  3. Gerar API Token                                                                                                                                                                            
+  - Account Settings → API tokens → "Add API token"
+  - Scope: "Entire account" (para o primeiro upload)                                                                                                                                            
+  - Copie o token — ele só aparece uma vez                        
+                                                                                                                                                                                                
+  4. Configurar localmente                                        
+  # Cria o arquivo de credenciais                                                                                                                                                               
+  cat > ~/.pypirc << 'EOF'                                        
+  [pypi]                                                                                                                                                                                        
+    username = __token__                                          
+    password = pypi-SeuTokenAqui                                                                                                                                                                
+  EOF                                                             
+  chmod 600 ~/.pypirc                                                                                                                                                                           
+                     
+  5. Publicar                                                                                                                                                                                   
+  cd /home/pedrocastanha/Desktop/python-projects/lib-tracecast/packages/tracecast-py                                                                                                            
+  pip install build twine
+  python -m build                                                                                                                                                                               
+  twine upload dist/*                                             
+                                                                                                                                                                                                
+  ---                                                             
+  npm (TypeScript)
+
+  1. Criar conta
+  - Acesse npmjs.com → "Sign Up"
+  - Confirme o e-mail                                                                                                                                                                           
+                     
+  2. Login no terminal                                                                                                                                                                          
+  npm login                                                                                                                                                                                     
+  # vai pedir: username, password, e-mail, OTP (se tiver 2FA)
+                                                                                                                                                                                                
+  3. Publicar                                                                                                                                                                                   
+  cd /home/pedrocastanha/Desktop/python-projects/lib-tracecast/packages/tracecast-ts                                                                                                            
+  npm publish --access public                                                                                                                                                                   
+  # --access public é necessário porque o pacote não tem escopo (@org/pkg)                                                                                                                      
+                                                                  
+  ---                                                                                                                                                                                           
+  Verificar disponibilidade do nome
+                                                                                                                                                                                                
+  Antes de criar as contas, vale checar se o nome tracecast está livre:
+                                                                                                                                                                                                
+  # PyPI                                                          
+  curl -s https://pypi.org/pypi/tracecast/json | python3 -c "import sys,json; d=json.load(sys.stdin); print('JA EXISTE:', d['info']['version'])" 2>/dev/null || echo "Nome livre no PyPI"       
+                                                                                                                                                                                                
+  # npm
+  npm view tracecast version 2>/dev/null || echo "Nome livre no npm"                                                                                                                            
+                                                                  
+  Se o nome já estiver ocupado, você precisaria usar algo como tracecast-sdk ou py-tracecast. Quer que eu verifique isso agora?      
+
 # TraceCast
 
 > **SDK de observabilidade para LLMs** — rastreie tokens, custo, latência e tool calls em qualquer framework de IA. Python · TypeScript · Framework-Agnostic.
