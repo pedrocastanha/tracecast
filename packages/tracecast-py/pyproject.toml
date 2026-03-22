@@ -30,8 +30,9 @@ Issues = "https://github.com/pedrocastanha/tracecast/issues"
 
 [project.optional-dependencies]
 mongo     = ["pymongo>=4.6"]
+postgres  = ["psycopg2>=2.9"]
 langchain = ["langchain-core>=0.3"]
-all       = ["tracecast[mongo,langchain]"]
+all       = ["tracecast[mongo,postgres,langchain]"]
 
 [tool.setuptools.packages.find]
 where = ["."]
