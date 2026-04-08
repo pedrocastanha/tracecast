@@ -65,6 +65,17 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Auto-bump version
+        run: python3 scripts/bump-version.py patch
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add packages/tracecast-py/pyproject.toml packages/tracecast-ts/package.json
+          git commit -m "chore: bump version to $(python3 -c \"import re; print(re.search(r'version\s*=\s*\\\"([^\\\"]+)\\\"', open('packages/tracecast-py/pyproject.toml').read()).group(1))\")" || echo "No changes to commit"
+          git push
+
       - name: Build distribution
         working-directory: packages/tracecast-py
         run: |

@@ -1,7 +1,7 @@
 {
   "name": "tracecast",
   "version": "0.1.0",
-  "description": "LLM observability SDK — framework-agnostic tracing for AI applications",
+  "description": "LLM observability SDK \u2014 framework-agnostic tracing for AI applications",
   "license": "MIT",
   "author": "Pedro Castanheira Costa",
   "homepage": "https://github.com/pedrocastanha/tracecast",
