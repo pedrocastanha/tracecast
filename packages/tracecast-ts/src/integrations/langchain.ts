@@ -51,17 +51,25 @@ export class TraceCastCallback {
     const usage = output?.llmOutput?.tokenUsage ?? output?.llmOutput?.usage ?? {};
     const tokensIn  = usage.promptTokens     ?? usage.input_tokens  ?? 0;
     const tokensOut = usage.completionTokens ?? usage.output_tokens ?? 0;
-    span.tokensIn  = tokensIn;
-    span.tokensOut = tokensOut;
-    span.costUsd = calculateCost(span.model!, tokensIn, tokensOut);
+    const details = usage.promptTokensDetails ?? usage.prompt_tokens_details ?? {};
+    const tokensInCached: number =
+      details.cachedTokens ??
+      details.cached_tokens ??
+      usage.cache_read_input_tokens ??
+      0;
+    span.tokensIn        = tokensIn;
+    span.tokensOut       = tokensOut;
+    span.tokensInCached  = tokensInCached || undefined;
+    span.costUsd = calculateCost(span.model!, tokensIn, tokensOut, undefined, tokensInCached);
     this.tracer.currentTrace()?.spans.push(span);
 
     this.logger?.llmEnd(this.traceName(), {
-      model:     span.model!,
+      model:           span.model!,
       tokensIn,
       tokensOut,
-      costUsd:   span.costUsd,
-      latencyMs: this.elapsedMs(span),
+      tokensInCached:  tokensInCached || undefined,
+      costUsd:         span.costUsd,
+      latencyMs:       this.elapsedMs(span),
     });
   }
 

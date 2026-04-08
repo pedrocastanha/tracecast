@@ -54,15 +54,22 @@ class TraceCastCallback(BaseCallbackHandler):
         if usage["input"] == 0 and usage["output"] == 0:
             try:
                 meta = response.generations[0][0].message.usage_metadata
-                usage = {
-                    "input": meta.get("input_tokens", 0),
-                    "output": meta.get("output_tokens", 0),
-                }
+                if isinstance(meta, dict):
+                    details = meta.get("input_token_details") or {}
+                    usage = {
+                        "input":  meta.get("input_tokens", 0),
+                        "output": meta.get("output_tokens", 0),
+                        "cached": details.get("cache_read") or details.get("cached") or 0,
+                    }
             except (IndexError, AttributeError):
                 pass
-        span.tokens_in  = usage["input"]
-        span.tokens_out = usage["output"]
-        span.cost_usd   = calculate_cost(span.model, span.tokens_in, span.tokens_out)
+        span.tokens_in        = usage["input"]
+        span.tokens_out       = usage["output"]
+        span.tokens_in_cached = int(usage.get("cached", 0) or 0)
+        span.cost_usd         = calculate_cost(
+            span.model, span.tokens_in, span.tokens_out,
+            tokens_in_cached=span.tokens_in_cached,
+        )
         trace = self.tracer.current()
         if trace:
             trace.spans.append(span)
@@ -72,6 +79,7 @@ class TraceCastCallback(BaseCallbackHandler):
                 model=span.model or "unknown",
                 tokens_in=span.tokens_in,
                 tokens_out=span.tokens_out,
+                tokens_in_cached=span.tokens_in_cached,
                 cost_usd=span.cost_usd,
                 latency_ms=self._elapsed_ms(span),
             )

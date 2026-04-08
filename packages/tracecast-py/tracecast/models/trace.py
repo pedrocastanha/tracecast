@@ -16,6 +16,7 @@ class Trace:
     model: Optional[str] = None
     total_tokens_in: int = 0
     total_tokens_out: int = 0
+    total_tokens_in_cached: int = 0
     total_tokens: int = 0
     cost_usd: float = 0.0
     latency_ms: Optional[int] = None
@@ -24,9 +25,10 @@ class Trace:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def _finalize(self) -> None:
-        self.total_tokens_in  = sum(s.tokens_in  for s in self.spans)
-        self.total_tokens_out = sum(s.tokens_out for s in self.spans)
-        self.total_tokens     = self.total_tokens_in + self.total_tokens_out
+        self.total_tokens_in        = sum(s.tokens_in         for s in self.spans)
+        self.total_tokens_out       = sum(s.tokens_out        for s in self.spans)
+        self.total_tokens_in_cached = sum(s.tokens_in_cached  for s in self.spans)
+        self.total_tokens           = self.total_tokens_in + self.total_tokens_out
         self.cost_usd         = sum(s.cost_usd   for s in self.spans)
 
         if self.finished_at:
@@ -50,9 +52,10 @@ class Trace:
             "user_id":          self.user_id,
             "project_id":       self.project_id,
             "model":            self.model,
-            "total_tokens_in":  self.total_tokens_in,
-            "total_tokens_out": self.total_tokens_out,
-            "total_tokens":     self.total_tokens,
+            "total_tokens_in":        self.total_tokens_in,
+            "total_tokens_out":       self.total_tokens_out,
+            "total_tokens_in_cached": self.total_tokens_in_cached,
+            "total_tokens":           self.total_tokens,
             "cost_usd":         self.cost_usd,
             "latency_ms":       self.latency_ms,
             "tools_used":       self.tools_used,

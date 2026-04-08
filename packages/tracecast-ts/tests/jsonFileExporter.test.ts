@@ -7,7 +7,7 @@ import { Trace } from "../src/types";
 
 const makeTrace = (id: string): Trace => ({
   traceId: id, name: "test", startedAt: new Date(), finishedAt: new Date(),
-  totalTokensIn: 0, totalTokensOut: 0, totalTokens: 0,
+  totalTokensIn: 0, totalTokensOut: 0, totalTokensInCached: 0, totalTokens: 0,
   costUsd: 0, toolsUsed: {}, spans: [], metadata: {},
 });
 

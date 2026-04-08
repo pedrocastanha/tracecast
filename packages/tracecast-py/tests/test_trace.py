@@ -3,11 +3,12 @@ from tracecast.models.trace import Trace
 from tracecast.models.span import Span, SpanType
 
 
-def _make_span(tokens_in=100, tokens_out=50, cost=0.01, name="llm:gpt-4o", type=SpanType.LLM):
+def _make_span(tokens_in=100, tokens_out=50, cost=0.01, name="llm:gpt-4o", type=SpanType.LLM, tokens_in_cached=0):
     now = datetime.now(timezone.utc)
     return Span(span_id="s1", type=type, name=name,
                 started_at=now, finished_at=now + timedelta(milliseconds=100),
-                tokens_in=tokens_in, tokens_out=tokens_out, cost_usd=cost)
+                tokens_in=tokens_in, tokens_out=tokens_out, cost_usd=cost,
+                tokens_in_cached=tokens_in_cached)
 
 
 def test_finalize_agrega_tokens_e_custo():
@@ -41,3 +42,24 @@ def test_to_dict_serializa_campos_obrigatorios():
     assert d["trace_id"] == "t3"
     assert "spans" in d
     assert "cost_usd" in d
+
+
+def test_finalize_agrega_cached_tokens():
+    t = Trace(trace_id="t4", name="test", started_at=datetime.now(timezone.utc))
+    t.spans = [
+        _make_span(tokens_in=1000, tokens_out=200, tokens_in_cached=300),
+        _make_span(tokens_in=500,  tokens_out=100, tokens_in_cached=100),
+    ]
+    t.finished_at = datetime.now(timezone.utc)
+    t._finalize()
+    assert t.total_tokens_in_cached == 400
+
+
+def test_total_tokens_in_cached_aparece_no_to_dict():
+    t = Trace(trace_id="t5", name="test", started_at=datetime.now(timezone.utc))
+    t.spans = [_make_span(tokens_in_cached=150)]
+    t.finished_at = datetime.now(timezone.utc)
+    t._finalize()
+    d = t.to_dict()
+    assert "total_tokens_in_cached" in d
+    assert d["total_tokens_in_cached"] == 150

@@ -161,3 +161,36 @@ test("addSpan fora do trace nao lanca erro", () => {
     tracer.addSpan({ spanId: "x", type: SpanType.LLM, name: "y", startedAt: new Date() })
   ).not.toThrow();
 });
+
+test("trace agrega totalTokensInCached dos spans", async () => {
+  const exportedTraces: any[] = [];
+  const tracer = new Tracer({ exporters: [{ export: (t) => { exportedTraces.push(t); } }] });
+
+  await tracer.trace("cached-test", async (t) => {
+    t.spans.push({
+      spanId: "s1", type: SpanType.LLM, name: "llm:gpt-4o", model: "gpt-4o",
+      startedAt: new Date(), tokensIn: 1000, tokensOut: 200, tokensInCached: 300,
+    });
+    t.spans.push({
+      spanId: "s2", type: SpanType.LLM, name: "llm:claude-sonnet-4-6", model: "claude-sonnet-4-6",
+      startedAt: new Date(), tokensIn: 500, tokensOut: 100, tokensInCached: 100,
+    });
+  });
+
+  const tr = exportedTraces[0];
+  expect(tr.totalTokensInCached).toBe(400);
+});
+
+test("trace com spans sem tokensInCached resulta em totalTokensInCached zero", async () => {
+  const exportedTraces: any[] = [];
+  const tracer = new Tracer({ exporters: [{ export: (t) => { exportedTraces.push(t); } }] });
+
+  await tracer.trace("no-cache-test", async (t) => {
+    t.spans.push({
+      spanId: "s1", type: SpanType.LLM, name: "llm:gpt-4o", model: "gpt-4o",
+      startedAt: new Date(), tokensIn: 100, tokensOut: 50,
+    });
+  });
+
+  expect(exportedTraces[0].totalTokensInCached).toBe(0);
+});

@@ -13,6 +13,7 @@ export interface Span {
   model?: string;
   tokensIn?: number;
   tokensOut?: number;
+  tokensInCached?: number;
   costUsd?: number;
   metadata?: Record<string, unknown>;
 }
@@ -28,6 +29,7 @@ export interface Trace {
   model?: string;
   totalTokensIn: number;
   totalTokensOut: number;
+  totalTokensInCached: number;
   totalTokens: number;
   costUsd: number;
   latencyMs?: number;

@@ -96,3 +96,60 @@ test("getPriceTable expoe tabela com todos os provedores principais", () => {
   expect(table["llama-4-scout"]).toBeDefined();
   expect(table["o4-mini"]).toBeDefined();
 });
+
+
+// --- cached tokens ---
+
+test("cached tokens reduzem custo gpt-4o", () => {
+  // gpt-4o: input=0.0025, cached=0.00125
+  // sem cache: 1000 * 0.0025/1000 = 0.0025
+  // com 400 cached: 600*0.0025/1000 + 400*0.00125/1000 = 0.0015 + 0.0005 = 0.002
+  const semCache = calculateCost("gpt-4o", 1000, 0);
+  const comCache = calculateCost("gpt-4o", 1000, 0, undefined, 400);
+  expect(comCache).toBeLessThan(semCache);
+});
+
+test("cached tokens valor correto gpt-4o", () => {
+  const cost = calculateCost("gpt-4o", 1000, 0, undefined, 400);
+  expect(cost).toBeCloseTo(0.002, 9);
+});
+
+test("cached tokens valor correto claude-sonnet-4-6", () => {
+  // claude-sonnet-4-6: input=0.003, cached=0.0003
+  // 1000 in (500 cached), 0 out
+  // = 500*0.003/1000 + 500*0.0003/1000 = 0.0015 + 0.00015 = 0.00165
+  const cost = calculateCost("claude-sonnet-4-6", 1000, 0, undefined, 500);
+  expect(cost).toBeCloseTo(0.00165, 9);
+});
+
+test("tokensInCached=0 comportamento identico ao padrao", () => {
+  const padrao  = calculateCost("gpt-4o", 1000, 500);
+  const comZero = calculateCost("gpt-4o", 1000, 500, undefined, 0);
+  expect(comZero).toBeCloseTo(padrao, 9);
+});
+
+test("modelo sem cached key ignora tokensInCached", () => {
+  // gpt-4-turbo nao tem preco de cache
+  const semCache = calculateCost("gpt-4-turbo", 1000, 500);
+  const comCache = calculateCost("gpt-4-turbo", 1000, 500, undefined, 400);
+  expect(comCache).toBeCloseTo(semCache, 9);
+});
+
+test("modelos com suporte a cache tem propriedade cached na tabela", () => {
+  const table = getPriceTable();
+  const modelosComCache = [
+    "gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "o3", "o4-mini",
+    "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5",
+    "claude-opus-4", "claude-sonnet-4", "claude-haiku-3-5",
+  ];
+  for (const model of modelosComCache) {
+    expect(table[model].cached).toBeDefined();
+  }
+});
+
+test("modelos sem suporte a cache nao tem propriedade cached", () => {
+  const table = getPriceTable();
+  expect(table["gpt-4-turbo"].cached).toBeUndefined();
+  expect(table["gemini-2.5-flash"].cached).toBeUndefined();
+  expect(table["llama-4-scout"].cached).toBeUndefined();
+});

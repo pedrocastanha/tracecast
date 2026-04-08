@@ -95,3 +95,59 @@ def test_price_table_tem_provedores_principais():
     assert "gemini-2.5-flash" in PRICE_TABLE
     assert "llama-4-scout" in PRICE_TABLE
     assert "o4-mini" in PRICE_TABLE
+
+
+# --- cached tokens ---
+
+def test_cached_tokens_reduzem_custo_gpt4o():
+    # gpt-4o: input=0.00250, cached=0.00125 (50% off)
+    # 1000 tokens normais: 0.0025
+    # 1000 tokens (400 cached, 600 uncached): 600*0.0025/1000 + 400*0.00125/1000 = 0.0015 + 0.0005 = 0.002
+    cost_sem_cache = calculate_cost("gpt-4o", tokens_in=1000, tokens_out=0)
+    cost_com_cache = calculate_cost("gpt-4o", tokens_in=1000, tokens_out=0, tokens_in_cached=400)
+    assert cost_com_cache < cost_sem_cache
+
+
+def test_cached_tokens_zero_comportamento_identico():
+    cost_padrao   = calculate_cost("gpt-4o", tokens_in=1000, tokens_out=500)
+    cost_sem_cache = calculate_cost("gpt-4o", tokens_in=1000, tokens_out=500, tokens_in_cached=0)
+    assert abs(cost_padrao - cost_sem_cache) < 1e-9
+
+
+def test_modelo_sem_cached_ignora_parametro():
+    # gpt-4-turbo nao tem preco de cache
+    cost_padrao = calculate_cost("gpt-4-turbo", tokens_in=1000, tokens_out=500)
+    cost_cache  = calculate_cost("gpt-4-turbo", tokens_in=1000, tokens_out=500, tokens_in_cached=400)
+    assert abs(cost_padrao - cost_cache) < 1e-9
+
+
+def test_cached_tokens_claude_sonnet():
+    # claude-sonnet-4-6: input=0.00300, cached=0.00030 (10% do input)
+    # 1000 in (500 cached, 500 normal), 0 out
+    # = 500 * 0.003/1000 + 500 * 0.0003/1000 = 0.0015 + 0.00015 = 0.00165
+    cost = calculate_cost("claude-sonnet-4-6", tokens_in=1000, tokens_out=0, tokens_in_cached=500)
+    assert abs(cost - 0.00165) < 1e-9
+
+
+def test_cached_tokens_valor_correto_gpt4o():
+    # gpt-4o: input=0.0025, cached=0.00125
+    # 1000 in (400 cached), 0 out
+    # = 600 * 0.0025/1000 + 400 * 0.00125/1000 = 0.0015 + 0.0005 = 0.002
+    cost = calculate_cost("gpt-4o", tokens_in=1000, tokens_out=0, tokens_in_cached=400)
+    assert abs(cost - 0.002) < 1e-9
+
+
+def test_modelos_com_suporte_a_cache_tem_chave_cached():
+    modelos_com_cache = [
+        "gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "o3", "o4-mini",
+        "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5",
+        "claude-opus-4", "claude-sonnet-4", "claude-haiku-3-5",
+    ]
+    for model in modelos_com_cache:
+        assert "cached" in PRICE_TABLE[model], f"{model} deveria ter preco de cache"
+
+
+def test_modelos_sem_suporte_a_cache_nao_tem_chave_cached():
+    modelos_sem_cache = ["gpt-4-turbo", "gemini-2.5-flash", "llama-4-scout"]
+    for model in modelos_sem_cache:
+        assert "cached" not in PRICE_TABLE[model], f"{model} nao deveria ter preco de cache"

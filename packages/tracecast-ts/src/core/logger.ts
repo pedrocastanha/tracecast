@@ -55,13 +55,14 @@ export class TraceCastLogger {
 
   llmEnd(
     traceName: string,
-    opts: { model: string; tokensIn: number; tokensOut: number; costUsd: number; latencyMs?: number },
+    opts: { model: string; tokensIn: number; tokensOut: number; tokensInCached?: number; costUsd: number; latencyMs?: number },
   ): void {
     const latency = opts.latencyMs != null ? `${(opts.latencyMs / 1000).toFixed(2)}s` : "n/a";
+    const cachedStr = opts.tokensInCached ? ` (${opts.tokensInCached} cached)` : "";
     this.logFn(
       this.fmt(
         traceName,
-        `LLM end → ${opts.model} | tokens: ${opts.tokensIn} in / ${opts.tokensOut} out | $${opts.costUsd.toFixed(4)} | ${latency}`,
+        `LLM end → ${opts.model} | tokens: ${opts.tokensIn} in${cachedStr} / ${opts.tokensOut} out | $${opts.costUsd.toFixed(4)} | ${latency}`,
       ),
     );
   }

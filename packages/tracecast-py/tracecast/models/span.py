@@ -20,6 +20,7 @@ class Span:
     model: Optional[str] = None
     tokens_in: int = 0
     tokens_out: int = 0
+    tokens_in_cached: int = 0
     cost_usd: float = 0.0
     metadata: Dict[str, Any] = field(default_factory=dict)
 
@@ -42,6 +43,7 @@ class Span:
             "model": self.model,
             "tokens_in": self.tokens_in,
             "tokens_out": self.tokens_out,
+            "tokens_in_cached": self.tokens_in_cached,
             "total_tokens": self.total_tokens,
             "cost_usd": self.cost_usd,
             "latency_ms": self.latency_ms,

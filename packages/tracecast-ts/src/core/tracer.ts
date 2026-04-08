@@ -50,10 +50,11 @@ export class Tracer {
       sessionId:      opts.sessionId,
       userId:         opts.userId,
       projectId:      opts.projectId,
-      totalTokensIn:  0,
-      totalTokensOut: 0,
-      totalTokens:    0,
-      costUsd:        0,
+      totalTokensIn:        0,
+      totalTokensOut:       0,
+      totalTokensInCached:  0,
+      totalTokens:          0,
+      costUsd:              0,
       toolsUsed:      {},
       spans:          [],
       metadata:       opts.metadata ?? {},
@@ -116,10 +117,11 @@ export class Tracer {
   }
 
   private _finalize(trace: Trace): void {
-    trace.totalTokensIn  = trace.spans.reduce((s, sp) => s + (sp.tokensIn  ?? 0), 0);
-    trace.totalTokensOut = trace.spans.reduce((s, sp) => s + (sp.tokensOut ?? 0), 0);
-    trace.totalTokens    = trace.totalTokensIn + trace.totalTokensOut;
-    trace.costUsd        = trace.spans.reduce((s, sp) => s + (sp.costUsd   ?? 0), 0);
+    trace.totalTokensIn        = trace.spans.reduce((s, sp) => s + (sp.tokensIn        ?? 0), 0);
+    trace.totalTokensOut       = trace.spans.reduce((s, sp) => s + (sp.tokensOut       ?? 0), 0);
+    trace.totalTokensInCached  = trace.spans.reduce((s, sp) => s + (sp.tokensInCached  ?? 0), 0);
+    trace.totalTokens          = trace.totalTokensIn + trace.totalTokensOut;
+    trace.costUsd              = trace.spans.reduce((s, sp) => s + (sp.costUsd         ?? 0), 0);
 
     if (trace.finishedAt) {
       trace.latencyMs = trace.finishedAt.getTime() - trace.startedAt.getTime();

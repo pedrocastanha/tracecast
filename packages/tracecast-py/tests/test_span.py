@@ -21,3 +21,16 @@ def test_total_tokens_soma_in_out():
     span = Span(span_id="y", type=SpanType.LLM, name="llm:gpt-4o",
                 started_at=datetime.now(timezone.utc), tokens_in=100, tokens_out=50)
     assert span.total_tokens == 150
+
+def test_tokens_in_cached_default_zero():
+    span = Span(span_id="z", type=SpanType.LLM, name="llm:gpt-4o",
+                started_at=datetime.now(timezone.utc))
+    assert span.tokens_in_cached == 0
+
+def test_tokens_in_cached_aparece_no_to_dict():
+    span = Span(span_id="c1", type=SpanType.LLM, name="llm:gpt-4o",
+                started_at=datetime.now(timezone.utc),
+                tokens_in=500, tokens_out=100, tokens_in_cached=200)
+    d = span.to_dict()
+    assert "tokens_in_cached" in d
+    assert d["tokens_in_cached"] == 200

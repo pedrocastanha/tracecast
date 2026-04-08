@@ -60,16 +60,18 @@ class TraceCastLogger:
         model: str,
         tokens_in: int,
         tokens_out: int,
+        tokens_in_cached: int = 0,
         cost_usd: float,
         latency_ms: Optional[float],
     ) -> None:
         prefix = self._prefix or trace_name
         latency_str = f"{latency_ms / 1000:.2f}s" if latency_ms is not None else "n/a"
+        cached_str = f" ({tokens_in_cached} cached)" if tokens_in_cached > 0 else ""
         _logger.info(
             self._fmt(
                 prefix,
                 f"LLM end → {model}"
-                f" | tokens: {tokens_in} in / {tokens_out} out"
+                f" | tokens: {tokens_in} in{cached_str} / {tokens_out} out"
                 f" | ${cost_usd:.4f}"
                 f" | {latency_str}",
             )

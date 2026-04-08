@@ -6,17 +6,18 @@ import { randomUUID } from "crypto";
 
 function makeTrace(overrides: Partial<Trace> = {}): Trace {
   return {
-    traceId:       randomUUID(),
-    name:          "test-trace",
-    startedAt:     new Date(),
-    finishedAt:    new Date(),
-    totalTokensIn:  100,
-    totalTokensOut: 50,
-    totalTokens:    150,
-    costUsd:        0.005,
-    toolsUsed:      {},
-    spans:          [],
-    metadata:       {},
+    traceId:              randomUUID(),
+    name:                 "test-trace",
+    startedAt:            new Date(),
+    finishedAt:           new Date(),
+    totalTokensIn:        100,
+    totalTokensOut:       50,
+    totalTokensInCached:  0,
+    totalTokens:          150,
+    costUsd:              0.005,
+    toolsUsed:            {},
+    spans:                [],
+    metadata:             {},
     ...overrides,
   };
 }
