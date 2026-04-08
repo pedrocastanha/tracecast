@@ -42,7 +42,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: packages/tracecast-ts
-        run: npm ci
+        run: npm ci --legacy-peer-deps
 
       - name: Build
         working-directory: packages/tracecast-ts
@@ -94,7 +94,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: packages/tracecast-ts
-        run: npm ci
+        run: npm ci --legacy-peer-deps
 
       - name: Build
         working-directory: packages/tracecast-ts
