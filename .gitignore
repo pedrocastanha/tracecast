@@ -30,6 +30,9 @@ traces/
 *.swo
 Thumbs.db
 
+# Version bump temp file
+.version
+
 # Worktrees internos
 .worktrees/
 .claude

@@ -79,6 +79,10 @@ def main():
         choices=["patch", "minor", "major"],
         help="Type of version bump (default: patch)",
     )
+    parser.add_argument(
+        "--output-file",
+        help="Write new version to a file (for CI/CD)",
+    )
     args = parser.parse_args()
 
     current_version = get_current_version()
@@ -89,6 +93,10 @@ def main():
 
     update_pyproject(new_version)
     update_package_json(new_version)
+
+    if args.output_file:
+        Path(args.output_file).write_text(new_version)
+        print(f"📝 Version written to {args.output_file}")
 
     print("\n✨ Version bump complete!")
 
