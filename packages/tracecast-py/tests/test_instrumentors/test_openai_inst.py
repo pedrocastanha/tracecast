@@ -125,3 +125,40 @@ class TestOpenAIInstrumentor:
         assert "_error" in span["metadata"]
         assert span["metadata"]["_error"] == "network error"
         inst.unpatch()
+
+    def test_async_trace_active_captures_span(self):
+        """Verify AsyncCompletions.create is also patched."""
+        import asyncio
+        import openai.resources.chat.completions as mod
+
+        class AsyncCompletions:
+            async def create(self, *args, **kwargs):
+                response = MagicMock()
+                response.usage.prompt_tokens = 80
+                response.usage.completion_tokens = 40
+                response.usage.prompt_tokens_details.cached_tokens = 0
+                response.choices = [MagicMock()]
+                response.choices[0].message.content = "Async Hello!"
+                return response
+
+        mod.AsyncCompletions = AsyncCompletions
+
+        from tracecast.instrumentors.openai_inst import OpenAIInstrumentor
+        inst = OpenAIInstrumentor()
+        inst.patch()
+
+        exporter = DictExporter()
+        tracer = Tracer(exporters=[exporter])
+        client = AsyncCompletions()
+
+        async def run():
+            with tracer.trace("async-test-trace"):
+                return await client.create(model="gpt-4o", messages=[{"role": "user", "content": "Hi"}])
+
+        asyncio.run(run())
+
+        assert len(exporter.traces) == 1
+        span = exporter.traces[0]["spans"][0]
+        assert span["tokens_in"] == 80
+        assert span["tokens_out"] == 40
+        inst.unpatch()
