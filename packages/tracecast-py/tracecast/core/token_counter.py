@@ -6,6 +6,7 @@ def extract_tokens(response: Any, provider: str) -> dict:
         "openai":    _from_openai,
         "anthropic": _from_anthropic,
         "langchain": _from_langchain_response,
+        "gemini":    _from_gemini,
     }
     fn = extractors.get(provider, _fallback)
     return fn(response)
@@ -19,6 +20,17 @@ def extract_content(response: Any, provider: str) -> Optional[str]:
                 msg = getattr(choices[0], "message", None)
                 if msg:
                     return getattr(msg, "content", None) or getattr(msg, "reasoning_content", None) or ""
+        except Exception:
+            pass
+        return None
+    if provider == "gemini":
+        try:
+            candidates = getattr(response, "candidates", []) or []
+            if candidates:
+                parts = getattr(candidates[0], "content", None)
+                if parts:
+                    text_parts = getattr(parts, "parts", []) or []
+                    return "".join(getattr(p, "text", "") for p in text_parts)
         except Exception:
             pass
         return None
@@ -84,6 +96,17 @@ def _from_langchain_response(r) -> dict:
         "input":  usage.get("prompt_tokens") or usage.get("input_tokens", 0),
         "output": usage.get("completion_tokens") or usage.get("output_tokens", 0),
         "cached": cached,
+    }
+
+
+def _from_gemini(r) -> dict:
+    usage = getattr(r, "usage_metadata", None)
+    if usage is None:
+        return {"input": 0, "output": 0, "cached": 0}
+    return {
+        "input": getattr(usage, "prompt_token_count", 0),
+        "output": getattr(usage, "candidates_token_count", 0),
+        "cached": getattr(usage, "cached_content_token_count", 0) or 0,
     }
 
 
