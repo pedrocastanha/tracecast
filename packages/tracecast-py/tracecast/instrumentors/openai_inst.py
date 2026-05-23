@@ -19,22 +19,22 @@ class OpenAIInstrumentor(BaseInstrumentor):
         # Sync
         self._original_create = mod.Completions.create
         self_ref = self
+        _orig_create = self._original_create
 
         def patched_create(client_self, *args, **kwargs):
-            return self_ref._intercept(client_self, args, kwargs, self_ref._original_create)
+            return self_ref._intercept(client_self, args, kwargs, _orig_create)
 
         mod.Completions.create = patched_create
-        self._patched_sync_fn = patched_create
 
         # Async
         if hasattr(mod, "AsyncCompletions"):
             self._original_acreate = mod.AsyncCompletions.create
+            _orig_acreate = self._original_acreate
 
             async def patched_acreate(client_self, *args, **kwargs):
-                return await self_ref._async_intercept(client_self, args, kwargs, self_ref._original_acreate)
+                return await self_ref._async_intercept(client_self, args, kwargs, _orig_acreate)
 
             mod.AsyncCompletions.create = patched_acreate
-            self._patched_async_fn = patched_acreate
 
         self._patched = True
 
