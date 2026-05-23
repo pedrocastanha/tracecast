@@ -43,7 +43,7 @@ class AnthropicInstrumentor(BaseInstrumentor):
             return
         import anthropic.resources.messages as mod
         mod.Messages.create = self._original_create
-        if hasattr(mod, "AsyncMessages") and self._original_acreate is not None:
+        if self._original_acreate is not None:
             mod.AsyncMessages.create = self._original_acreate
         self._original_create = None
         self._original_acreate = None

@@ -152,11 +152,8 @@ class TestAnthropicInstrumentor:
         client = AsyncMessages()
 
         async def run():
-            with tracer.trace("async-test-trace"):
-                return await client.create(
-                    model="claude-3-5-sonnet-20241022",
-                    messages=[{"role": "user", "content": "Hi"}],
-                )
+            async with tracer.atrace("async-anthropic-trace"):
+                return await client.create(model="claude-sonnet-4-6", messages=[])
 
         asyncio.run(run())
 
@@ -164,4 +161,36 @@ class TestAnthropicInstrumentor:
         span = exporter.traces[0]["spans"][0]
         assert span["tokens_in"] == 150
         assert span["tokens_out"] == 60
+        inst.unpatch()
+
+    def test_async_exception_appends_span_with_error(self):
+        """Verify async error path appends span with _error metadata."""
+        import asyncio
+        import anthropic.resources.messages as mod
+
+        class AsyncMessages:
+            async def create(self, *args, **kwargs):
+                raise RuntimeError("async network error")
+
+        mod.AsyncMessages = AsyncMessages
+
+        from tracecast.instrumentors.anthropic_inst import AnthropicInstrumentor
+        inst = AnthropicInstrumentor()
+        inst.patch()
+
+        exporter = DictExporter()
+        tracer = Tracer(exporters=[exporter])
+        client = AsyncMessages()
+
+        async def run():
+            with tracer.trace("async-error-trace"):
+                return await client.create(model="claude-sonnet-4-6", messages=[])
+
+        with pytest.raises(RuntimeError, match="async network error"):
+            asyncio.run(run())
+
+        assert len(exporter.traces) == 1
+        span = exporter.traces[0]["spans"][0]
+        assert "_error" in span["metadata"]
+        assert span["metadata"]["_error"] == "async network error"
         inst.unpatch()

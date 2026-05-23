@@ -43,7 +43,7 @@ class OpenAIInstrumentor(BaseInstrumentor):
             return
         import openai.resources.chat.completions as mod
         mod.Completions.create = self._original_create
-        if hasattr(mod, "AsyncCompletions") and self._original_acreate is not None:
+        if self._original_acreate is not None:
             mod.AsyncCompletions.create = self._original_acreate
         self._original_create = None
         self._original_acreate = None
