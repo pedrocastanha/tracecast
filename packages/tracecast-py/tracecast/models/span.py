@@ -22,6 +22,8 @@ class Span:
     tokens_out: int = 0
     tokens_in_cached: int = 0
     cost_usd: float = 0.0
+    input: Optional[str] = None
+    output: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -47,6 +49,8 @@ class Span:
             "total_tokens": self.total_tokens,
             "cost_usd": self.cost_usd,
             "latency_ms": self.latency_ms,
+            "input": self.input,
+            "output": self.output,
             "started_at": self.started_at.isoformat(),
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
             "metadata": self.metadata,

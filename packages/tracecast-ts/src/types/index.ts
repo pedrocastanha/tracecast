@@ -15,6 +15,8 @@ export interface Span {
   tokensOut?: number;
   tokensInCached?: number;
   costUsd?: number;
+  input?: string;
+  output?: string;
   metadata?: Record<string, unknown>;
 }
 

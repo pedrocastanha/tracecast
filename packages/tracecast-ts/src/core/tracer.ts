@@ -20,6 +20,10 @@ interface TracerOptions {
 
 const storage = new AsyncLocalStorage<Trace>();
 
+export function getCurrentTrace(): Trace | null {
+  return storage.getStore() ?? null;
+}
+
 export class Tracer {
   private exporters: BaseExporter[];
   private failOnExportError: boolean;
@@ -100,6 +104,66 @@ export class Tracer {
   addSpan(span: Span): void {
     const trace = this.currentTrace();
     if (trace) trace.spans.push(span);
+  }
+
+  mount(app: any, options: { prefix?: string; maxTraces?: number } = {}): any {
+    const prefix = options.prefix ?? "/tracecast";
+    const maxTraces = options.maxTraces ?? 500;
+
+    const { TraceReader } = require("../dashboard/reader") as typeof import("../dashboard/reader");
+    const { createRouter } = require("../dashboard/router") as typeof import("../dashboard/router");
+
+    const reader = new TraceReader(this.exporters, maxTraces);
+    const router = createRouter(reader);
+
+    try {
+      app.use(prefix, router);
+      return;
+    } catch { /* fallthrough */ }
+
+    try {
+      if (typeof app.use === "function") {
+        app.use(prefix, router);
+        return;
+      }
+    } catch { /* fallthrough */ }
+
+    const http = require("http") as typeof import("http");
+    const server = http.createServer((req, res) => {
+      const url = req.url ?? "/";
+      if (url.startsWith(prefix)) {
+        req.url = url.slice(prefix.length) || "/";
+        (router as any)(req, res);
+      } else {
+        if (typeof app === "function") {
+          app(req, res);
+        } else {
+          res.writeHead(404);
+          res.end("Not found");
+        }
+      }
+    });
+    return server;
+  }
+
+  serve(options: { host?: string; port?: number; prefix?: string; maxTraces?: number } = {}): void {
+    const prefix = options.prefix ?? "/tracecast";
+    const port = options.port ?? 7777;
+    const host = options.host ?? "127.0.0.1";
+    const maxTraces = options.maxTraces ?? 500;
+
+    const express = require("express") as typeof import("express");
+    const { TraceReader } = require("../dashboard/reader") as typeof import("../dashboard/reader");
+    const { createRouter } = require("../dashboard/router") as typeof import("../dashboard/router");
+
+    const app = (express as any)();
+    const reader = new TraceReader(this.exporters, maxTraces);
+    app.use(prefix, createRouter(reader));
+    app.use("/", (_req: any, res: any) => res.redirect(prefix));
+
+    app.listen(port, host, () => {
+      console.log(`TraceCast Dashboard → http://${host}:${port}${prefix}`);
+    });
   }
 
   private async _safeExport(trace: Trace): Promise<void> {

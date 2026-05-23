@@ -104,3 +104,56 @@ class Tracer:
     @staticmethod
     def current() -> Optional[Trace]:
         return _current_trace.get()
+
+    def mount(
+        self,
+        app,
+        prefix: str = "/tracecast",
+        read_only: bool = True,
+        auth: Optional[tuple] = None,
+        max_traces: int = 500,
+    ):
+        from ..dashboard.reader import TraceReader
+        reader = TraceReader(self.exporters, max_traces=max_traces)
+
+        try:
+            from fastapi import FastAPI
+            if isinstance(app, FastAPI):
+                from ..dashboard.router import _make_router
+                router = _make_router(reader)
+                app.include_router(router, prefix=prefix)
+                return
+        except ImportError:
+            pass
+
+        try:
+            from flask import Flask
+            if isinstance(app, Flask):
+                from ..dashboard.blueprint import _make_blueprint
+                bp = _make_blueprint(reader, prefix=prefix)
+                app.register_blueprint(bp)
+                return
+        except ImportError:
+            pass
+
+        from ..dashboard.asgi_middleware import DashboardASGIMiddleware
+        middleware = DashboardASGIMiddleware(app, reader, prefix=prefix)
+        import warnings
+        warnings.warn(
+            "TraceCast: Could not auto-detect framework. Wrapping as ASGI middleware. "
+            "If mount() returns a new app instance, reassign it: app = tracer.mount(app)",
+            stacklevel=2,
+        )
+        return middleware
+
+    def serve(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 7777,
+        prefix: str = "/tracecast",
+        max_traces: int = 500,
+    ):
+        from ..dashboard.reader import TraceReader
+        from ..dashboard.standalone import serve_dashboard
+        reader = TraceReader(self.exporters, max_traces=max_traces)
+        serve_dashboard(reader, host=host, port=port, prefix=prefix)
