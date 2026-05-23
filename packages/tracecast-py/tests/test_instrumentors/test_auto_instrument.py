@@ -34,12 +34,27 @@ def test_auto_instrument_calls_patch_on_registered():
 
 
 def test_auto_instrument_idempotent():
+    from tracecast.instrument import _registry, _reset
     _reset()
-    fake = FakeInstrumentor()
-    _registry["fake"] = fake
+
+    patch_count = 0
+
+    class CountingInstrumentor(BaseInstrumentor):
+        def patch(self) -> None:
+            nonlocal patch_count
+            patch_count += 1
+            self._patched = True
+
+        def unpatch(self) -> None:
+            self._patched = False
+
+        def is_patched(self) -> bool:
+            return getattr(self, "_patched", False)
+
+    _registry["counting"] = CountingInstrumentor()
     auto_instrument()
-    auto_instrument()  # second call should be no-op
-    assert fake.is_patched()
+    auto_instrument()
+    assert patch_count == 1  # must be called exactly once
     _reset()
 
 
