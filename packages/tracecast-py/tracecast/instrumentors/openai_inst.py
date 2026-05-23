@@ -18,8 +18,8 @@ class OpenAIInstrumentor(BaseInstrumentor):
         self._original_create = mod.Completions.create
         self_ref = self
 
-        def patched_create(client_self, **kwargs):
-            return self_ref._intercept(client_self, kwargs, self_ref._original_create)
+        def patched_create(client_self, *args, **kwargs):
+            return self_ref._intercept(client_self, args, kwargs, self_ref._original_create)
 
         mod.Completions.create = patched_create
         self._patched = True
@@ -35,14 +35,14 @@ class OpenAIInstrumentor(BaseInstrumentor):
     def is_patched(self) -> bool:
         return self._patched
 
-    def _intercept(self, client_self: Any, kwargs: dict, original_fn: Any) -> Any:
+    def _intercept(self, client_self: Any, args: tuple, kwargs: dict, original_fn: Any) -> Any:
         from ..core.tracer import Tracer
         trace = Tracer.current()
         if trace is None:
-            return original_fn(client_self, **kwargs)
-        return self._capture(client_self, kwargs, original_fn, trace)
+            return original_fn(client_self, *args, **kwargs)
+        return self._capture(client_self, args, kwargs, original_fn, trace)
 
-    def _capture(self, client_self: Any, kwargs: dict, original_fn: Any, trace: Any) -> Any:
+    def _capture(self, client_self: Any, args: tuple, kwargs: dict, original_fn: Any, trace: Any) -> Any:
         from ..models.span import Span, SpanType
         from ..core.token_counter import extract_tokens, extract_content, extract_input_text
         from ..core.cost_calculator import calculate_cost
@@ -60,7 +60,7 @@ class OpenAIInstrumentor(BaseInstrumentor):
         )
 
         try:
-            response = original_fn(client_self, **kwargs)
+            response = original_fn(client_self, *args, **kwargs)
         except Exception as exc:
             span.finished_at = datetime.now(timezone.utc)
             span.metadata["_error"] = str(exc)

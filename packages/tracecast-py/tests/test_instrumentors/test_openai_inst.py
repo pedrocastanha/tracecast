@@ -97,3 +97,31 @@ class TestOpenAIInstrumentor:
         assert span["tokens_out"] == 50
         assert span["cost_usd"] > 0
         inst.unpatch()
+
+    def test_exception_appends_span_with_error(self):
+        from tracecast.instrumentors.openai_inst import OpenAIInstrumentor
+
+        # Replace create with a raising function BEFORE patching so the
+        # instrumentor saves the raising function as _original_create.
+        def raising_create(self_c, *args, **kwargs):
+            raise RuntimeError("network error")
+        self.Completions.create = raising_create
+
+        inst = OpenAIInstrumentor()
+        inst.patch()
+
+        exporter = DictExporter()
+        tracer = Tracer(exporters=[exporter])
+        client = self.Completions()
+
+        with pytest.raises(RuntimeError, match="network error"):
+            with tracer.trace("test-trace"):
+                client.create(model="gpt-4o", messages=[])
+
+        assert len(exporter.traces) == 1
+        trace = exporter.traces[0]
+        assert len(trace["spans"]) == 1
+        span = trace["spans"][0]
+        assert "_error" in span["metadata"]
+        assert span["metadata"]["_error"] == "network error"
+        inst.unpatch()
