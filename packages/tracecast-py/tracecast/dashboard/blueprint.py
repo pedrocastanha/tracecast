@@ -10,7 +10,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional
 from .reader import TraceReader
-from .aggregator import compute_metrics, paginate_traces
+from .aggregator import compute_metrics, paginate_traces, _trace_summary
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -86,11 +86,62 @@ def _make_blueprint(reader: TraceReader, prefix: str = "/tracecast") -> "Bluepri
             return send_file(fp, mimetype="text/html")
         return "<h1>TraceCast Dashboard</h1>", 200
 
+    @bp.route("/api/sessions")
+    def api_sessions():
+        sessions = reader.get_sessions()
+        return jsonify({"sessions": sessions, "total": len(sessions)})
+
+    @bp.route("/api/sessions/<session_id>")
+    def api_session_detail(session_id: str):
+        traces = reader.get_session(session_id)
+        if not traces:
+            return jsonify({"error": "Session not found"}), 404
+        return jsonify({
+            "session_id": session_id,
+            "traces": [_trace_summary(t) for t in traces],
+            "total_cost_usd": round(sum(t.cost_usd for t in traces), 6),
+            "total_tokens": sum(t.total_tokens for t in traces),
+        })
+
+    @bp.route("/api/projects")
+    def api_projects():
+        projects = reader.get_projects()
+        return jsonify({"projects": projects, "total": len(projects)})
+
+    @bp.route("/api/projects/<project_id>")
+    def api_project_detail(project_id: str):
+        traces = reader.get_project(project_id)
+        if not traces:
+            return jsonify({"error": "Project not found"}), 404
+        return jsonify({
+            "project_id": project_id,
+            "traces": [_trace_summary(t) for t in traces],
+            "total_cost_usd": round(sum(t.cost_usd for t in traces), 6),
+            "total_tokens": sum(t.total_tokens for t in traces),
+        })
+
     @bp.route("/static/<filename>")
     def static_file(filename: str):
         fp = STATIC_DIR / filename
         if not fp.exists():
             return "Not found", 404
         return send_file(fp, mimetype=_mime(filename))
+
+    @bp.route("/assets/<path:path>")
+    def static_assets(path: str):
+        fp = STATIC_DIR / "assets" / path
+        if not fp.exists():
+            return "Not found", 404
+        return send_file(fp, mimetype=_mime(path))
+
+    @bp.route("/", defaults={"path": ""})
+    @bp.route("/<path:path>")
+    def spa_fallback(path: str):
+        if path.startswith("api/"):
+            return "Not found", 404
+        index_path = STATIC_DIR / "index.html"
+        if index_path.exists():
+            return send_file(index_path, mimetype="text/html")
+        return "<h1>TraceCast Dashboard</h1>", 200
 
     return bp

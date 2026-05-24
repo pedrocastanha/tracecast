@@ -42,6 +42,20 @@ class TraceReader:
                 return t
         return None
 
+    def get_sessions(self) -> list:
+        from .aggregator import compute_sessions
+        return compute_sessions(self.get_traces())
+
+    def get_session(self, session_id: str) -> List[Trace]:
+        return [t for t in self.get_traces() if t.session_id == session_id]
+
+    def get_projects(self) -> list:
+        from .aggregator import compute_projects
+        return compute_projects(self.get_traces())
+
+    def get_project(self, project_id: str) -> List[Trace]:
+        return [t for t in self.get_traces() if t.project_id == project_id]
+
     def _read_from(self, exporter) -> List[Trace]:
         name = type(exporter).__name__
 

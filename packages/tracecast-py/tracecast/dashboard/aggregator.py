@@ -132,6 +132,76 @@ def _trace_summary(trace: Trace) -> dict:
     }
 
 
+def compute_sessions(traces: List[Trace]) -> list:
+    """Aggregate traces by session_id. Traces without session_id are skipped."""
+    groups: dict[str, dict] = {}
+    for t in traces:
+        sid = t.session_id
+        if not sid:
+            continue
+        if sid not in groups:
+            groups[sid] = {
+                "session_id": sid,
+                "trace_count": 0,
+                "total_cost_usd": 0.0,
+                "total_tokens": 0,
+                "total_tokens_in": 0,
+                "total_tokens_out": 0,
+                "first_trace_at": t.started_at.isoformat(),
+                "last_trace_at": t.started_at.isoformat(),
+            }
+        g = groups[sid]
+        g["trace_count"] += 1
+        g["total_cost_usd"] += t.cost_usd
+        g["total_tokens"] += t.total_tokens
+        g["total_tokens_in"] += t.total_tokens_in
+        g["total_tokens_out"] += t.total_tokens_out
+        ts = t.started_at.isoformat()
+        if ts < g["first_trace_at"]:
+            g["first_trace_at"] = ts
+        if ts > g["last_trace_at"]:
+            g["last_trace_at"] = ts
+    result = sorted(groups.values(), key=lambda x: x["last_trace_at"], reverse=True)
+    for r in result:
+        r["total_cost_usd"] = round(r["total_cost_usd"], 6)
+    return result
+
+
+def compute_projects(traces: List[Trace]) -> list:
+    """Aggregate traces by project_id. Traces without project_id are skipped."""
+    groups: dict[str, dict] = {}
+    for t in traces:
+        pid = t.project_id
+        if not pid:
+            continue
+        if pid not in groups:
+            groups[pid] = {
+                "project_id": pid,
+                "trace_count": 0,
+                "total_cost_usd": 0.0,
+                "total_tokens": 0,
+                "total_tokens_in": 0,
+                "total_tokens_out": 0,
+                "first_trace_at": t.started_at.isoformat(),
+                "last_trace_at": t.started_at.isoformat(),
+            }
+        g = groups[pid]
+        g["trace_count"] += 1
+        g["total_cost_usd"] += t.cost_usd
+        g["total_tokens"] += t.total_tokens
+        g["total_tokens_in"] += t.total_tokens_in
+        g["total_tokens_out"] += t.total_tokens_out
+        ts = t.started_at.isoformat()
+        if ts < g["first_trace_at"]:
+            g["first_trace_at"] = ts
+        if ts > g["last_trace_at"]:
+            g["last_trace_at"] = ts
+    result = sorted(groups.values(), key=lambda x: x["last_trace_at"], reverse=True)
+    for r in result:
+        r["total_cost_usd"] = round(r["total_cost_usd"], 6)
+    return result
+
+
 def _period_delta(period: str) -> timedelta:
     mapping = {
         "1h": timedelta(hours=1),

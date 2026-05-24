@@ -113,6 +113,17 @@ class Tracer:
         auth: Optional[tuple] = None,
         max_traces: int = 500,
     ):
+        if not self.exporters:
+            import warnings
+            from ..exporters.dict_exporter import DictExporter
+            self.exporters = [DictExporter()]
+            warnings.warn(
+                "TraceCast: No exporter configured. Using in-memory storage. "
+                "Data will be lost on restart. Configure a persistent exporter "
+                "(JsonFileExporter, MongoExporter, PostgresExporter) for production.",
+                stacklevel=2,
+            )
+
         from ..dashboard.reader import TraceReader
         reader = TraceReader(self.exporters, max_traces=max_traces)
 

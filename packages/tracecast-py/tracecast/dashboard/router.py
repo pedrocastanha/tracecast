@@ -12,7 +12,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional
 from .reader import TraceReader
-from .aggregator import compute_metrics, paginate_traces
+from .aggregator import compute_metrics, paginate_traces, _trace_summary
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -114,11 +114,61 @@ def _make_router(reader: TraceReader) -> "APIRouter":
             return HTMLResponse(content=index_path.read_text(encoding="utf-8"))
         return HTMLResponse(content="<h1>TraceCast Dashboard</h1><p>Static files not found.</p>")
 
+    @router.get("/api/sessions")
+    def api_sessions():
+        sessions = reader.get_sessions()
+        return {"sessions": sessions, "total": len(sessions)}
+
+    @router.get("/api/sessions/{session_id}")
+    def api_session_detail(session_id: str):
+        traces = reader.get_session(session_id)
+        if not traces:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return {
+            "session_id": session_id,
+            "traces": [_trace_summary(t) for t in traces],
+            "total_cost_usd": round(sum(t.cost_usd for t in traces), 6),
+            "total_tokens": sum(t.total_tokens for t in traces),
+        }
+
+    @router.get("/api/projects")
+    def api_projects():
+        projects = reader.get_projects()
+        return {"projects": projects, "total": len(projects)}
+
+    @router.get("/api/projects/{project_id}")
+    def api_project_detail(project_id: str):
+        traces = reader.get_project(project_id)
+        if not traces:
+            raise HTTPException(status_code=404, detail="Project not found")
+        return {
+            "project_id": project_id,
+            "traces": [_trace_summary(t) for t in traces],
+            "total_cost_usd": round(sum(t.cost_usd for t in traces), 6),
+            "total_tokens": sum(t.total_tokens for t in traces),
+        }
+
     @router.get("/static/{filename}")
     def static_file(filename: str):
         fp = STATIC_DIR / filename
         if not fp.exists():
             raise HTTPException(status_code=404, detail="File not found")
         return Response(content=fp.read_bytes(), media_type=_mime(filename))
+
+    @router.get("/assets/{path:path}")
+    def static_assets(path: str):
+        fp = STATIC_DIR / "assets" / path
+        if not fp.exists():
+            raise HTTPException(status_code=404, detail="Asset not found")
+        return Response(content=fp.read_bytes(), media_type=_mime(path))
+
+    @router.get("/{path:path}")
+    def spa_fallback(path: str):
+        if path.startswith("api/"):
+            raise HTTPException(status_code=404)
+        index_path = STATIC_DIR / "index.html"
+        if index_path.exists():
+            return HTMLResponse(content=index_path.read_text(encoding="utf-8"))
+        raise HTTPException(status_code=404)
 
     return router
