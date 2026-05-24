@@ -16,8 +16,7 @@ export class GeminiInstrumentor implements BaseInstrumentor {
     } catch {
       throw new Error("@google/generative-ai not installed");
     }
-    const GenerativeModel =
-      mod.GoogleGenerativeAI?.GenerativeModel ?? mod.GenerativeModel ?? null;
+    const GenerativeModel = mod.GenerativeModel ?? null;
     if (!GenerativeModel?.prototype?.generateContent) return;
     this._original = GenerativeModel.prototype.generateContent;
     const originalGenerate = this._original;
@@ -64,8 +63,7 @@ export class GeminiInstrumentor implements BaseInstrumentor {
     if (!this._patched || !this._original) return;
     try {
       const mod = require("@google/generative-ai");
-      const GenerativeModel =
-        mod.GoogleGenerativeAI?.GenerativeModel ?? mod.GenerativeModel ?? null;
+      const GenerativeModel = mod.GenerativeModel ?? null;
       if (GenerativeModel?.prototype) {
         GenerativeModel.prototype.generateContent = this._original;
       }
