@@ -45,6 +45,19 @@ describe("computeSessions", () => {
     expect(computeSessions([])).toHaveLength(0);
     expect(computeSessions([makeTrace("t1")])).toHaveLength(0);
   });
+
+  it("tracks first and last trace timestamps correctly", () => {
+    const traces = [
+      { ...makeTrace("t1", "s1"), startedAt: new Date("2026-05-20T08:00:00Z") },
+      { ...makeTrace("t2", "s1"), startedAt: new Date("2026-05-20T10:00:00Z") },
+      { ...makeTrace("t3", "s1"), startedAt: new Date("2026-05-20T09:00:00Z") },
+    ];
+    const sessions = computeSessions(traces);
+    expect(sessions).toHaveLength(1);
+    const s = sessions[0] as any;
+    expect(s.first_trace_at).toBe("2026-05-20T08:00:00.000Z");
+    expect(s.last_trace_at).toBe("2026-05-20T10:00:00.000Z");
+  });
 });
 
 describe("computeProjects", () => {

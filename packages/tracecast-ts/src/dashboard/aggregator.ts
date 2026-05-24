@@ -1,5 +1,4 @@
 import { Trace, Span, SpanType } from "../types";
-import { randomUUID } from "crypto";
 
 export function computeMetrics(
   traces: Trace[],
