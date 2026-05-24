@@ -79,13 +79,6 @@ def _make_blueprint(reader: TraceReader, prefix: str = "/tracecast") -> "Bluepri
             "exporter": type(reader._exporters[0]).__name__ if reader._exporters else "none",
         })
 
-    @bp.route("/")
-    def dashboard_index():
-        fp = STATIC_DIR / "index.html"
-        if fp.exists():
-            return send_file(fp, mimetype="text/html")
-        return "<h1>TraceCast Dashboard</h1>", 200
-
     @bp.route("/api/sessions")
     def api_sessions():
         sessions = reader.get_sessions()

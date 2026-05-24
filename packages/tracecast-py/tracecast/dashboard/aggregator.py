@@ -147,8 +147,8 @@ def compute_sessions(traces: List[Trace]) -> list:
                 "total_tokens": 0,
                 "total_tokens_in": 0,
                 "total_tokens_out": 0,
-                "first_trace_at": t.started_at.isoformat(),
-                "last_trace_at": t.started_at.isoformat(),
+                "_first_dt": t.started_at,
+                "_last_dt": t.started_at,
             }
         g = groups[sid]
         g["trace_count"] += 1
@@ -156,14 +156,16 @@ def compute_sessions(traces: List[Trace]) -> list:
         g["total_tokens"] += t.total_tokens
         g["total_tokens_in"] += t.total_tokens_in
         g["total_tokens_out"] += t.total_tokens_out
-        ts = t.started_at.isoformat()
-        if ts < g["first_trace_at"]:
-            g["first_trace_at"] = ts
-        if ts > g["last_trace_at"]:
-            g["last_trace_at"] = ts
-    result = sorted(groups.values(), key=lambda x: x["last_trace_at"], reverse=True)
+        dt = t.started_at
+        if dt < g["_first_dt"]:
+            g["_first_dt"] = dt
+        if dt > g["_last_dt"]:
+            g["_last_dt"] = dt
+    result = sorted(groups.values(), key=lambda x: x["_last_dt"], reverse=True)
     for r in result:
         r["total_cost_usd"] = round(r["total_cost_usd"], 6)
+        r["first_trace_at"] = r.pop("_first_dt").isoformat()
+        r["last_trace_at"] = r.pop("_last_dt").isoformat()
     return result
 
 
@@ -182,8 +184,8 @@ def compute_projects(traces: List[Trace]) -> list:
                 "total_tokens": 0,
                 "total_tokens_in": 0,
                 "total_tokens_out": 0,
-                "first_trace_at": t.started_at.isoformat(),
-                "last_trace_at": t.started_at.isoformat(),
+                "_first_dt": t.started_at,
+                "_last_dt": t.started_at,
             }
         g = groups[pid]
         g["trace_count"] += 1
@@ -191,14 +193,16 @@ def compute_projects(traces: List[Trace]) -> list:
         g["total_tokens"] += t.total_tokens
         g["total_tokens_in"] += t.total_tokens_in
         g["total_tokens_out"] += t.total_tokens_out
-        ts = t.started_at.isoformat()
-        if ts < g["first_trace_at"]:
-            g["first_trace_at"] = ts
-        if ts > g["last_trace_at"]:
-            g["last_trace_at"] = ts
-    result = sorted(groups.values(), key=lambda x: x["last_trace_at"], reverse=True)
+        dt = t.started_at
+        if dt < g["_first_dt"]:
+            g["_first_dt"] = dt
+        if dt > g["_last_dt"]:
+            g["_last_dt"] = dt
+    result = sorted(groups.values(), key=lambda x: x["_last_dt"], reverse=True)
     for r in result:
         r["total_cost_usd"] = round(r["total_cost_usd"], 6)
+        r["first_trace_at"] = r.pop("_first_dt").isoformat()
+        r["last_trace_at"] = r.pop("_last_dt").isoformat()
     return result
 
 

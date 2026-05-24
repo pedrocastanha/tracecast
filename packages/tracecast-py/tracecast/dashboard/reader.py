@@ -30,7 +30,7 @@ class TraceReader:
 
         traces.sort(key=lambda t: t.started_at, reverse=True)
         if len(traces) > self._max_traces:
-            traces = traces[-self._max_traces:]
+            traces = traces[:self._max_traces]
 
         self._cache = traces
         self._last_read = now
