@@ -10,8 +10,9 @@ interface SessionSummary {
 }
 
 export function Sessions() {
-  const { data, loading } = useApi<{ sessions: SessionSummary[]; total: number }>("/sessions", []);
-  if (loading || !data) return <div style={{ color: "var(--text-muted)" }}>Loading...</div>;
+  const { data, loading, error } = useApi<{ sessions: SessionSummary[]; total: number }>("/sessions", []);
+  if (loading) return <div style={{ color: "var(--text-muted)" }}>Loading...</div>;
+  if (error || !data) return <div style={{ color: "var(--red)" }}>Error: {error ?? "Failed to load sessions"}</div>;
   return (
     <div>
       <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16 }}>Sessions</h2>

@@ -6,9 +6,10 @@ export function TraceDetail() {
   const { traceId } = useParams();
   const navigate = useNavigate();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: t, loading } = useApi<any>(`/traces/${traceId}`, [traceId]);
+  const { data: t, loading, error } = useApi<any>(`/traces/${traceId}`, [traceId]);
 
-  if (loading || !t) return <div style={{ color: "var(--text-muted)" }}>Loading...</div>;
+  if (loading) return <div style={{ color: "var(--text-muted)" }}>Loading...</div>;
+  if (error || !t) return <div style={{ color: "var(--red)" }}>Error: {error ?? "Trace not found"}</div>;
 
   return (
     <div>

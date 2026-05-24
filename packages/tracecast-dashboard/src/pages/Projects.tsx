@@ -10,8 +10,9 @@ interface ProjectSummary {
 }
 
 export function Projects() {
-  const { data, loading } = useApi<{ projects: ProjectSummary[]; total: number }>("/projects", []);
-  if (loading || !data) return <div style={{ color: "var(--text-muted)" }}>Loading...</div>;
+  const { data, loading, error } = useApi<{ projects: ProjectSummary[]; total: number }>("/projects", []);
+  if (loading) return <div style={{ color: "var(--text-muted)" }}>Loading...</div>;
+  if (error || !data) return <div style={{ color: "var(--red)" }}>Error: {error ?? "Failed to load projects"}</div>;
   return (
     <div>
       <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16 }}>Projects</h2>

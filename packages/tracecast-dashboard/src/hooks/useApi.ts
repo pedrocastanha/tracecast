@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 
-const BASE = "./api";
+const BASE = "/api";
 
 export function useApi<T>(path: string, deps: unknown[] = []): { data: T | null; loading: boolean; error: string | null } {
   const [data, setData] = useState<T | null>(null);
@@ -8,15 +8,20 @@ export function useApi<T>(path: string, deps: unknown[] = []): { data: T | null;
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    const controller = new AbortController();
     setLoading(true);
-    fetch(`${BASE}${path}`)
+    setError(null);
+    fetch(`${BASE}${path}`, { signal: controller.signal })
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
       })
       .then(setData)
-      .catch((e: Error) => setError(e.message))
+      .catch((e: Error) => {
+        if (e.name !== "AbortError") setError(e.message);
+      })
       .finally(() => setLoading(false));
+    return () => controller.abort();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 

@@ -23,9 +23,10 @@ interface Metrics {
 
 export function Overview() {
   const [period, setPeriod] = useState("7d");
-  const { data: m, loading } = useApi<Metrics>(`/metrics?period=${period}`, [period]);
+  const { data: m, loading, error } = useApi<Metrics>(`/metrics?period=${period}`, [period]);
 
-  if (loading || !m) return <div style={{ color: "var(--text-muted)" }}>Loading...</div>;
+  if (loading) return <div style={{ color: "var(--text-muted)" }}>Loading...</div>;
+  if (error || !m) return <div style={{ color: "var(--red)" }}>Error: {error ?? "Failed to load metrics"}</div>;
 
   const modelData = Object.entries(m.cost_by_model).map(([name, value]) => ({ name, value }));
   const projectData = Object.entries(m.cost_by_project).map(([name, value]) => ({ name, value }));
