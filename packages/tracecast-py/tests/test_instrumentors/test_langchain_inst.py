@@ -174,6 +174,36 @@ class TestLangChainInstrumentor:
     # ImportError tests
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Span lifecycle test (delegate caching)
+    # ------------------------------------------------------------------
+
+    def test_lazy_handler_span_lifecycle(self):
+        """Verify on_llm_start and on_llm_end share the same delegate (span_stack consistent)."""
+        from tracecast.instrumentors.langchain_inst import LangChainInstrumentor, _LazyHandler
+
+        inst = LangChainInstrumentor()
+        inst.patch()
+
+        handler = inst._handler
+        assert isinstance(handler, _LazyHandler)
+
+        # Access two different attributes — must return same delegate
+        _ = handler.__getattr__("on_llm_start")
+        delegate1 = object.__getattribute__(handler, "_delegate")
+
+        _ = handler.__getattr__("on_llm_end")
+        delegate2 = object.__getattribute__(handler, "_delegate")
+
+        # A third access still returns the same cached delegate
+        _ = handler.__getattr__("on_llm_start")
+        delegate3 = object.__getattribute__(handler, "_delegate")
+
+        assert delegate1 is delegate2, "on_llm_end must reuse the same delegate as on_llm_start"
+        assert delegate2 is delegate3, "Repeated attribute access must not create a new delegate"
+
+        inst.unpatch()
+
     def test_import_error_when_langchain_not_installed(self):
         """patch() must raise ImportError when langchain_core is not available."""
         import sys

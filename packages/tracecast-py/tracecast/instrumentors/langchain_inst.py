@@ -43,23 +43,39 @@ def _ensure_hook_registered() -> None:
 
 
 class _LazyHandler:
-    """Resolves the active tracer lazily at each LangChain callback invocation.
+    """Proxy that caches a single TraceCastCallback delegate, resolving tracer lazily on first use.
 
-    LangChain calls methods such as ``on_llm_start`` directly on objects
-    stored in a ``CallbackManager``.  By delegating every attribute access to a
-    freshly-resolved ``TraceCastCallback`` we guarantee that the tracer in use
-    is always the one that is *currently* registered (e.g. via
-    ``auto_instrument``), even if ``auto_instrument`` was called *after*
-    ``patch()``.
+    LangChain calls methods such as ``on_llm_start`` and ``on_llm_end`` on the
+    *same* object stored in a ``CallbackManager``.  ``TraceCastCallback`` is
+    stateful — it stores active spans in ``self._span_stack`` — so all callback
+    methods **must** share one delegate instance.  Creating a new
+    ``TraceCastCallback`` on every ``__getattr__`` call (the previous
+    implementation) caused the span stack to be empty on ``on_llm_end``,
+    silently dropping every span.
+
+    The tracer reference is kept current without losing span state: if
+    ``_default_tracer`` is set after ``patch()`` (e.g. via ``auto_instrument``),
+    subsequent attribute accesses update ``delegate.tracer`` in-place.
     """
+
+    def __init__(self) -> None:
+        object.__setattr__(self, "_delegate", None)
 
     def __getattr__(self, name: str):  # type: ignore[override]
         from ..decorators import _default_tracer
         from ..core.tracer import Tracer as _Tracer
         from ..integrations.langchain import TraceCastCallback
 
-        tracer = _default_tracer if _default_tracer is not None else _Tracer()
-        delegate = TraceCastCallback(tracer)
+        delegate = object.__getattribute__(self, "_delegate")
+        if delegate is None:
+            tracer = _default_tracer if _default_tracer is not None else _Tracer()
+            delegate = TraceCastCallback(tracer)
+            object.__setattr__(self, "_delegate", delegate)
+        else:
+            # Keep tracer reference current without losing span state
+            from ..decorators import _default_tracer as _dt
+            if _dt is not None:
+                delegate.tracer = _dt
         return getattr(delegate, name)
 
 
