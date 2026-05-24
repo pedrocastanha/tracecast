@@ -1,6 +1,7 @@
 import { Trace, Span, SpanType } from "../types";
 import { readFile } from "fs/promises";
 import { BaseExporter } from "../exporters/base";
+import { computeSessions, computeProjects } from "./aggregator";
 
 export class TraceReader {
   private exporters: BaseExporter[];
@@ -44,7 +45,6 @@ export class TraceReader {
   }
 
   async getSessions(): Promise<Array<Record<string, unknown>>> {
-    const { computeSessions } = await import("./aggregator");
     return computeSessions(await this.getTraces());
   }
 
@@ -53,7 +53,6 @@ export class TraceReader {
   }
 
   async getProjects(): Promise<Array<Record<string, unknown>>> {
-    const { computeProjects } = await import("./aggregator");
     return computeProjects(await this.getTraces());
   }
 

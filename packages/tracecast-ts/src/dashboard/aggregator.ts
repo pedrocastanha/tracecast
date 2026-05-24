@@ -83,7 +83,7 @@ export function paginateTraces(
     date: (t) => t.startedAt.getTime(),
   };
   const key = keyFn[sortBy] ?? keyFn.date;
-  filtered.sort((a, b) => {
+  filtered = [...filtered].sort((a, b) => {
     return (order === "desc" ? -1 : 1) * (key(a) - key(b));
   });
 

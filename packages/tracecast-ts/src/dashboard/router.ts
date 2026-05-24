@@ -135,7 +135,10 @@ export function createRouter(reader: TraceReader): Router {
   });
 
   router.get("/static/:filename", (req: Request, res: Response) => {
-    const fp = path.join(STATIC_DIR, qs(req.params.filename)!);
+    const fp = path.resolve(STATIC_DIR, qs(req.params.filename)!);
+    if (!fp.startsWith(STATIC_DIR + path.sep) && fp !== STATIC_DIR) {
+      return res.status(400).send("Invalid path");
+    }
     if (fs.existsSync(fp)) {
       res.sendFile(fp);
     } else {
