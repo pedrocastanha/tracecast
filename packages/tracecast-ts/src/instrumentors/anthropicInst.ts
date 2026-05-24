@@ -17,7 +17,9 @@ export class AnthropicInstrumentor implements BaseInstrumentor {
       throw new Error("@anthropic-ai/sdk not installed");
     }
     const Anthropic = anthropicMod.default ?? anthropicMod.Anthropic ?? anthropicMod;
-    if (!Anthropic?.Messages?.prototype?.create) return;
+    if (!Anthropic?.Messages?.prototype?.create) {
+      throw new Error("@anthropic-ai/sdk: could not locate Messages.prototype.create");
+    }
     this._original = Anthropic.Messages.prototype.create;
     const originalCreate = this._original;
     Anthropic.Messages.prototype.create = async function (this: any, ...args: any[]) {
@@ -75,9 +77,11 @@ export class AnthropicInstrumentor implements BaseInstrumentor {
       if (Anthropic?.Messages?.prototype) {
         Anthropic.Messages.prototype.create = this._original;
       }
-    } catch { /* ignore */ }
-    this._original = null;
-    this._patched = false;
+      this._original = null;
+      this._patched = false;
+    } catch {
+      // prototype not restored — leave _patched=true so retry is possible
+    }
   }
 
   isPatched(): boolean {

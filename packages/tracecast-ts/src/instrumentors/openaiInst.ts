@@ -17,7 +17,9 @@ export class OpenAIInstrumentor implements BaseInstrumentor {
       throw new Error("openai not installed");
     }
     const OpenAI = openaiMod.default ?? openaiMod.OpenAI ?? openaiMod;
-    if (!OpenAI?.Chat?.Completions?.prototype?.create) return;
+    if (!OpenAI?.Chat?.Completions?.prototype?.create) {
+      throw new Error("openai: could not locate Chat.Completions.prototype.create");
+    }
     this._original = OpenAI.Chat.Completions.prototype.create;
     const originalCreate = this._original;
     OpenAI.Chat.Completions.prototype.create = async function (this: any, ...args: any[]) {
@@ -70,9 +72,11 @@ export class OpenAIInstrumentor implements BaseInstrumentor {
       if (OpenAI?.Chat?.Completions?.prototype) {
         OpenAI.Chat.Completions.prototype.create = this._original;
       }
-    } catch { /* ignore */ }
-    this._original = null;
-    this._patched = false;
+      this._original = null;
+      this._patched = false;
+    } catch {
+      // prototype not restored — leave _patched=true so retry is possible
+    }
   }
 
   isPatched(): boolean {

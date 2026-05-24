@@ -17,7 +17,9 @@ export class GeminiInstrumentor implements BaseInstrumentor {
       throw new Error("@google/generative-ai not installed");
     }
     const GenerativeModel = mod.GenerativeModel ?? null;
-    if (!GenerativeModel?.prototype?.generateContent) return;
+    if (!GenerativeModel?.prototype?.generateContent) {
+      throw new Error("@google/generative-ai: could not locate GenerativeModel.prototype.generateContent");
+    }
     this._original = GenerativeModel.prototype.generateContent;
     const originalGenerate = this._original;
     GenerativeModel.prototype.generateContent = async function (this: any, ...args: any[]) {
@@ -67,9 +69,11 @@ export class GeminiInstrumentor implements BaseInstrumentor {
       if (GenerativeModel?.prototype) {
         GenerativeModel.prototype.generateContent = this._original;
       }
-    } catch { /* ignore */ }
-    this._original = null;
-    this._patched = false;
+      this._original = null;
+      this._patched = false;
+    } catch {
+      // prototype not restored — leave _patched=true so retry is possible
+    }
   }
 
   isPatched(): boolean {
