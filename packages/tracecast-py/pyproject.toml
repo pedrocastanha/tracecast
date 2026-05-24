@@ -32,7 +32,8 @@ Issues = "https://github.com/pedrocastanha/tracecast/issues"
 mongo     = ["pymongo>=4.6"]
 postgres  = ["psycopg2>=2.9"]
 langchain = ["langchain-core>=0.3"]
-all       = ["tracecast[mongo,postgres,langchain]"]
+dashboard = ["fastapi>=0.100.0", "uvicorn>=0.20"]
+all       = ["tracecast[mongo,postgres,langchain,dashboard]"]
 
 [tool.setuptools.packages.find]
 where = ["."]

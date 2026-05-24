@@ -71,10 +71,14 @@
     "pg": "^8"
   },
   "peerDependencies": {
+    "express": ">=4.0.0",
     "mongodb": ">=5",
     "pg": ">=8"
   },
   "peerDependenciesMeta": {
+    "express": {
+      "optional": true
+    },
     "mongodb": {
       "optional": true
     },

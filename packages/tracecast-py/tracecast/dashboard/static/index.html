@@ -1,92 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TraceCast Dashboard</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<link rel="stylesheet" href="./static/style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TraceCast Dashboard</title>
+  <script type="module" crossorigin src="./assets/index-ViBLS4KN.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-DmCeQEIR.css">
 </head>
 <body>
-<header>
-  <h1>TraceCast</h1>
-  <nav>
-    <button data-page="overview" class="active">Overview</button>
-    <button data-page="traces">Traces</button>
-    <button data-page="models">Models</button>
-  </nav>
-  <div id="period-selector">
-    <select id="period">
-      <option value="1h">Last hour</option>
-      <option value="24h">Last 24h</option>
-      <option value="7d" selected>Last 7 days</option>
-      <option value="30d">Last 30 days</option>
-    </select>
-  </div>
-</header>
-
-<main>
-  <section id="page-overview" class="page active">
-    <div class="stats-grid">
-      <div class="stat-card"><div class="stat-label">Total Traces</div><div class="stat-value" id="stat-traces">—</div></div>
-      <div class="stat-card"><div class="stat-label">Total Cost</div><div class="stat-value" id="stat-cost">—</div></div>
-      <div class="stat-card"><div class="stat-label">Avg Latency</div><div class="stat-value" id="stat-latency">—</div></div>
-      <div class="stat-card"><div class="stat-label">Cache Hit Rate</div><div class="stat-value" id="stat-cache">—</div></div>
-      <div class="stat-card"><div class="stat-label">Tokens In</div><div class="stat-value" id="stat-tokens-in">—</div></div>
-      <div class="stat-card"><div class="stat-label">Tokens Out</div><div class="stat-value" id="stat-tokens-out">—</div></div>
-    </div>
-    <div class="chart-row">
-      <div class="chart-box"><h3>Cost Over Time</h3><canvas id="chart-cost-time"></canvas></div>
-      <div class="chart-box"><h3>Cost by Model</h3><canvas id="chart-cost-model"></canvas></div>
-    </div>
-    <div class="chart-row">
-      <div class="chart-box"><h3>Cost by Project</h3><canvas id="chart-cost-project"></canvas></div>
-    </div>
-  </section>
-
-  <section id="page-traces" class="page">
-    <div class="filters">
-      <input type="text" id="filter-project" placeholder="Project ID">
-      <input type="text" id="filter-user" placeholder="User ID">
-      <input type="date" id="filter-from">
-      <input type="date" id="filter-to">
-      <button id="btn-filter">Filter</button>
-      <button id="btn-clear-filters">Clear</button>
-      <span id="trace-count" class="filter-info"></span>
-    </div>
-    <div class="table-wrap">
-      <table id="traces-table">
-        <thead>
-          <tr>
-            <th data-sort="name">Name</th>
-            <th data-sort="date">Date</th>
-            <th data-sort="duration">Latency</th>
-            <th data-sort="tokens">Tokens (in/out)</th>
-            <th data-sort="cost">Cost</th>
-            <th>Spans</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </div>
-    <div id="pagination"></div>
-  </section>
-
-  <section id="page-models" class="page">
-    <div class="chart-row">
-      <div class="chart-box"><h3>Cost per Model</h3><canvas id="chart-models-cost"></canvas></div>
-    </div>
-    <div id="models-table-wrap"></div>
-  </section>
-</main>
-
-<div id="modal" class="modal hidden">
-  <div class="modal-content">
-    <span class="modal-close">&times;</span>
-    <div id="modal-body"></div>
-  </div>
-</div>
-
-<script src="./static/app.js"></script>
+  <div id="root"></div>
 </body>
 </html>
