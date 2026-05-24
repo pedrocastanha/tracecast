@@ -44,7 +44,7 @@ except ImportError:
 try:
     import crewai
     CREWAI_AVAILABLE = True
-except ImportError:
+except Exception:
     CREWAI_AVAILABLE = False
 
 try:

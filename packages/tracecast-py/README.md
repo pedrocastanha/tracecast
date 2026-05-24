@@ -9,6 +9,58 @@
 
 ---
 
+## 🆕 Novidades v0.2.0
+
+**Três novas features para rastrear tokens com zero esforço:**
+
+### `@trace_cast` — Decorator para funções e endpoints
+Substitua `with tracer.trace(...) as trace:` por uma anotação. Funciona com sync e async.
+
+```python
+from tracecast import trace_cast, set_default_tracer
+
+set_default_tracer(Tracer(exporters=[...]))
+
+@trace_cast
+async def minha_rota(message: str):  # trace = "__main__.minha_rota"
+    ...
+
+@trace_cast(name="gerar-resposta", session_id="sess-123")
+def endpoint_chat(prompt: str):
+    ...
+```
+
+### `wrap_openai` / `wrap_anthropic` — Proxy com tokens e custo automáticos
+Envolva seu cliente OpenAI/Anthropic **uma vez** e todas as chamadas geram spans com tokens extraídos e custo calculado automaticamente.
+
+```python
+from tracecast import wrap_openai
+import openai
+
+client = wrap_openai(openai.OpenAI())
+
+with tracer.trace("chat"):
+    resp = client.chat.completions.create(  # span + tokens + custo automáticos
+        model="gpt-4o", messages=[...]
+    )
+```
+
+Mais abaixo: `trace_llm_call()` para uso único sem proxy.
+
+### `TraceCastMiddleware` — ASGI middleware
+Auto-trace de toda requisição HTTP em FastAPI/Starlette.
+
+```python
+from tracecast.middleware import TraceCastMiddleware
+
+app.add_middleware(TraceCastMiddleware, tracer=tracer)
+# → toda request vira um trace "POST /api/chat"
+```
+
+> 📚 **Documentação completa:** [`API_REFERENCE.md`](./API_REFERENCE.md)
+
+---
+
 ## O que é
 
 TraceCast é um SDK leve que **captura automaticamente** cada interação com LLMs e as exporta para onde você precisar — MongoDB, PostgreSQL, arquivo JSONL, ou qualquer destino customizado.
@@ -117,18 +169,47 @@ await tracer.trace("minha_run", async (trace) => {
 
 ### SDK Puro (OpenAI, Anthropic, Google, Groq...)
 
-Crie spans manualmente com os dados de uso retornados pelo SDK.
+**Via proxy — recomendado:** uma linha de setup, zero boilerplate por chamada.
 
-**Python**
 ```python
-import openai
-from tracecast import Tracer, Span, SpanType, calculate_cost
+from tracecast import Tracer, wrap_openai, wrap_anthropic
 from tracecast.exporters import JsonFileExporter
+import openai
+
+tracer = Tracer(exporters=[JsonFileExporter("./traces.jsonl")], logging=True)
+client = wrap_openai(openai.OpenAI())
+
+with tracer.trace("openai-run", user_id="u1") as trace:
+    resp = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": "Olá!"}]
+    )
+    # Span criado automaticamente com tokens_in, tokens_out, cost_usd
+```
+
+**Via trace_llm_call — para uso único:**
+
+```python
+from tracecast import trace_llm_call
+import openai
+client = openai.OpenAI()
+
+with tracer.trace("openai-run"):
+    resp = trace_llm_call(
+        lambda: client.chat.completions.create(
+            model="gpt-4o", messages=[{"role": "user", "content": "Olá!"}]
+        ),
+        provider="openai",
+        model="gpt-4o",
+    )
+```
+
+**Modo manual (legado) — controle total sobre cada campo do span:**
+
+```python
+from tracecast import Tracer, Span, SpanType, calculate_cost
 from datetime import datetime, timezone
 import uuid
-
-client = openai.OpenAI()
-tracer = Tracer(exporters=[JsonFileExporter("./traces.jsonl")], logging=True)
 
 with tracer.trace("openai-run", user_id="u1") as trace:
     started = datetime.now(timezone.utc)
@@ -155,8 +236,7 @@ with tracer.trace("openai-run", user_id="u1") as trace:
 **TypeScript**
 ```typescript
 import OpenAI from "openai";
-import { Tracer, JsonFileExporter, SpanType, calculateCost } from "tracecast";
-import { randomUUID } from "crypto";
+import { Tracer, JsonFileExporter } from "tracecast";
 
 const client = new OpenAI();
 const tracer = new Tracer({ exporters: [new JsonFileExporter("./traces.jsonl")], logging: true });
@@ -179,6 +259,33 @@ await tracer.trace("openai-run", async (trace) => {
     costUsd: calculateCost("gpt-4o", resp.usage!.prompt_tokens, resp.usage!.completion_tokens),
   });
 }, { userId: "u1" });
+```
+
+### `@trace_cast` + FastAPI — Exemplo completo
+
+```python
+from fastapi import FastAPI
+from tracecast import trace_cast, set_default_tracer, Tracer, wrap_openai
+from tracecast.exporters import JsonFileExporter
+from tracecast.middleware import TraceCastMiddleware
+import openai
+
+tracer = Tracer(exporters=[JsonFileExporter("./api.jsonl")], logging=True)
+set_default_tracer(tracer)
+client = wrap_openai(openai.OpenAI())
+
+app = FastAPI()
+app.add_middleware(TraceCastMiddleware, tracer=tracer)
+
+@app.post("/chat")
+@trace_cast(user_id="auth_user")      # trace próprio além do middleware
+async def chat(message: str):
+    resp = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": message}],
+    )
+    return {"reply": resp.choices[0].message.content}
+# Cada POST /chat gera um trace do middleware + trace do decorator
 ```
 
 ---
@@ -657,6 +764,37 @@ npm install
 npx jest --forceExit
 # → 113 passed
 ```
+
+---
+
+## Por que TraceCast?
+
+| | TraceCast | LangSmith | LangFuse | Helicone |
+|---|---|---|---|---|
+| **Open source** | ✅ MIT | ❌ | ✅ MIT | ❌ |
+| **Self-hosted** | ✅ | ❌ (cloud) | ✅ | ❌ (cloud) |
+| **Zero dependências core** | ✅ | ❌ | ❌ | ❌ |
+| **Dual language (Python + TS)** | ✅ | ❌ | ✅ | ❌ |
+| **Dashboard com 1 linha** | 🔜 v0.3.0 | ❌ | ✅ | ❌ |
+| **Prompt versioning** | 🔜 v0.4.0 | ✅ | ✅ | ✅ |
+| **Avaliação (scores)** | 🔜 v0.5.0 | ✅ | ✅ | ❌ |
+| **Decorator `@trace_cast`** | ✅ | ❌ | ❌ | ❌ |
+| **Proxy SDK automático** | ✅ | ❌ | ❌ | ❌ |
+| **Tabela de preços built-in** | ✅ 22 modelos | Parcial | ✅ | ✅ |
+
+**Honestidade:** TraceCast ainda está evoluindo. LangSmith e LangFuse têm features enterprise (RBAC, SSO, alerting) que não estão no nosso escopo imediato. Nosso foco é **simplicidade radical**: uma ferramenta que você instala e funciona, sem serviços externos, sem vendor lock-in.
+
+---
+
+## 🗺️ Roadmap
+
+| Versão | Feature |
+|--------|---------|
+| **v0.2.0** ✅ | `@trace_cast` decorator, `wrap_openai` / `wrap_anthropic`, `TraceCastMiddleware`, `trace_llm_call` |
+| **v0.3.0** 🔜 | Dashboard embutido — `tracer.mount(app)` habilita UI de observabilidade |
+| **v0.4.0** 📋 | Prompt management — versione prompts, veja qual versão gerou qual trace |
+| **v0.5.0** 📋 | Avaliação — scores em traces, LLM-as-judge, comparação A/B de prompts |
+| **v0.6.0** 📋 | Alerting — webhooks para thresholds de custo/latência/tokens |
 
 ---
 

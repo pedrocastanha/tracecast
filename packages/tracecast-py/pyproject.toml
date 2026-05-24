@@ -40,5 +40,8 @@ where = ["."]
 include = ["tracecast*"]
 exclude = ["tests*"]
 
+[tool.setuptools.package-data]
+tracecast = ["dashboard/static/**/*", "dashboard/static/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
