@@ -27,12 +27,12 @@ class LlamaIndexInstrumentor(BaseInstrumentor):
             return
 
         from llama_index.core.instrumentation import get_dispatcher
-        from ._llamaindex_handler import TraceCastSpanHandler
+        from ._llamaindex_handler import _build_handler_class
 
+        TraceCastSpanHandler = _build_handler_class()
         dispatcher = get_dispatcher()
-        handler = TraceCastSpanHandler()
-        dispatcher.add_span_handler(handler)
-        self._handler = handler
+        self._handler = TraceCastSpanHandler()
+        dispatcher.add_span_handler(self._handler)
         self._patched = True
 
     def unpatch(self) -> None:

@@ -28,8 +28,14 @@ def _register_all():
             mod = importlib.import_module(f".{module_name}", package=__name__)
             cls = getattr(mod, class_name)
             _registry[name] = cls()
-        except Exception:
+        except ImportError:
             pass
+        except Exception as exc:
+            import warnings
+            warnings.warn(
+                f"TraceCast: failed to register instrumentor '{name}': {exc}",
+                stacklevel=2,
+            )
 
 
 __all__ = ["BaseInstrumentor"]
