@@ -43,6 +43,24 @@ export class TraceReader {
     return null;
   }
 
+  async getSessions(): Promise<Array<Record<string, unknown>>> {
+    const { computeSessions } = await import("./aggregator");
+    return computeSessions(await this.getTraces());
+  }
+
+  async getSession(sessionId: string): Promise<Trace[]> {
+    return (await this.getTraces()).filter(t => t.sessionId === sessionId);
+  }
+
+  async getProjects(): Promise<Array<Record<string, unknown>>> {
+    const { computeProjects } = await import("./aggregator");
+    return computeProjects(await this.getTraces());
+  }
+
+  async getProject(projectId: string): Promise<Trace[]> {
+    return (await this.getTraces()).filter(t => t.projectId === projectId);
+  }
+
   private async readFrom(exporter: BaseExporter): Promise<Trace[]> {
     const name = exporter.constructor.name;
 

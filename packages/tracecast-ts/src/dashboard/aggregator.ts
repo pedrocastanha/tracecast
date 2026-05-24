@@ -121,6 +121,68 @@ function traceSummary(t: Trace): Record<string, unknown> {
   };
 }
 
+export function computeSessions(traces: Trace[]): Array<Record<string, unknown>> {
+  const groups: Record<string, {
+    session_id: string; trace_count: number; total_cost_usd: number;
+    total_tokens: number; total_tokens_in: number; total_tokens_out: number;
+    first_trace_at: string; last_trace_at: string;
+  }> = {};
+  for (const t of traces) {
+    if (!t.sessionId) continue;
+    if (!groups[t.sessionId]) {
+      groups[t.sessionId] = {
+        session_id: t.sessionId, trace_count: 0, total_cost_usd: 0,
+        total_tokens: 0, total_tokens_in: 0, total_tokens_out: 0,
+        first_trace_at: t.startedAt.toISOString(),
+        last_trace_at: t.startedAt.toISOString(),
+      };
+    }
+    const g = groups[t.sessionId];
+    g.trace_count++;
+    g.total_cost_usd += t.costUsd;
+    g.total_tokens += t.totalTokens;
+    g.total_tokens_in += t.totalTokensIn;
+    g.total_tokens_out += t.totalTokensOut;
+    const iso = t.startedAt.toISOString();
+    if (iso < g.first_trace_at) g.first_trace_at = iso;
+    if (iso > g.last_trace_at) g.last_trace_at = iso;
+  }
+  return Object.values(groups)
+    .sort((a, b) => b.last_trace_at.localeCompare(a.last_trace_at))
+    .map(g => ({ ...g, total_cost_usd: Math.round(g.total_cost_usd * 1e6) / 1e6 }));
+}
+
+export function computeProjects(traces: Trace[]): Array<Record<string, unknown>> {
+  const groups: Record<string, {
+    project_id: string; trace_count: number; total_cost_usd: number;
+    total_tokens: number; total_tokens_in: number; total_tokens_out: number;
+    first_trace_at: string; last_trace_at: string;
+  }> = {};
+  for (const t of traces) {
+    if (!t.projectId) continue;
+    if (!groups[t.projectId]) {
+      groups[t.projectId] = {
+        project_id: t.projectId, trace_count: 0, total_cost_usd: 0,
+        total_tokens: 0, total_tokens_in: 0, total_tokens_out: 0,
+        first_trace_at: t.startedAt.toISOString(),
+        last_trace_at: t.startedAt.toISOString(),
+      };
+    }
+    const g = groups[t.projectId];
+    g.trace_count++;
+    g.total_cost_usd += t.costUsd;
+    g.total_tokens += t.totalTokens;
+    g.total_tokens_in += t.totalTokensIn;
+    g.total_tokens_out += t.totalTokensOut;
+    const iso = t.startedAt.toISOString();
+    if (iso < g.first_trace_at) g.first_trace_at = iso;
+    if (iso > g.last_trace_at) g.last_trace_at = iso;
+  }
+  return Object.values(groups)
+    .sort((a, b) => b.last_trace_at.localeCompare(a.last_trace_at))
+    .map(g => ({ ...g, total_cost_usd: Math.round(g.total_cost_usd * 1e6) / 1e6 }));
+}
+
 function periodDelta(period: string): number {
   const map: Record<string, number> = { "1h": 3600000, "24h": 86400000, "7d": 604800000, "30d": 2592000000 };
   return map[period] ?? 604800000;
