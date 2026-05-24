@@ -17,6 +17,13 @@ def auto_instrument(tracer: Optional[Tracer] = None) -> None:
             return
         if tracer:
             set_default_tracer(tracer)
+        # Register all built-in instrumentors (lazy to avoid circular imports at
+        # package load time; _register_all() is defined in instrumentors/__init__.py).
+        try:
+            from .instrumentors import _register_all
+            _register_all()
+        except Exception:
+            pass
         for name, inst in _registry.items():
             try:
                 inst.patch()
