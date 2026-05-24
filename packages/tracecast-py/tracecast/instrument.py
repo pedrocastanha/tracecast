@@ -22,8 +22,8 @@ def auto_instrument(tracer: Optional[Tracer] = None) -> None:
         try:
             from .instrumentors import _register_all
             _register_all()
-        except Exception:
-            pass
+        except Exception as exc:
+            warnings.warn(f"TraceCast: failed to register instrumentors: {exc}")
         for name, inst in _registry.items():
             try:
                 inst.patch()
