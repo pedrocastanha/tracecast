@@ -42,6 +42,27 @@ def _ensure_hook_registered() -> None:
     _hook_registered = True
 
 
+class _LazyHandler:
+    """Resolves the active tracer lazily at each LangChain callback invocation.
+
+    LangChain calls methods such as ``on_llm_start`` directly on objects
+    stored in a ``CallbackManager``.  By delegating every attribute access to a
+    freshly-resolved ``TraceCastCallback`` we guarantee that the tracer in use
+    is always the one that is *currently* registered (e.g. via
+    ``auto_instrument``), even if ``auto_instrument`` was called *after*
+    ``patch()``.
+    """
+
+    def __getattr__(self, name: str):  # type: ignore[override]
+        from ..decorators import _default_tracer
+        from ..core.tracer import Tracer as _Tracer
+        from ..integrations.langchain import TraceCastCallback
+
+        tracer = _default_tracer if _default_tracer is not None else _Tracer()
+        delegate = TraceCastCallback(tracer)
+        return getattr(delegate, name)
+
+
 class LangChainInstrumentor(BaseInstrumentor):
     """Instruments LangChain by registering TraceCastCallback globally.
 
@@ -59,18 +80,18 @@ class LangChainInstrumentor(BaseInstrumentor):
         self._ctx_token = None  # ContextVar reset token
 
     def patch(self) -> None:
-        """Register TraceCastCallback as a global LangChain callback handler."""
+        """Register a lazy TraceCastCallback as a global LangChain callback handler."""
         if self._patched:
             return
 
+        # Raises ImportError if langchain_core is not installed — done before
+        # any state mutation so the instance stays in an unpatched state.
         _ensure_hook_registered()
 
-        from ..integrations.langchain import TraceCastCallback
-        from ..decorators import _default_tracer
-        from ..core.tracer import Tracer
-
-        tracer = _default_tracer or Tracer()
-        self._handler = TraceCastCallback(tracer)
+        # Use a lazy handler so the tracer is resolved at invocation time, not
+        # at patch() time.  This means auto_instrument(tracer) can be called
+        # AFTER patch() and the correct tracer will still be used.
+        self._handler = _LazyHandler()
 
         # Set the ContextVar so LangChain includes our handler in every
         # CallbackManager it creates from this point on.
@@ -82,19 +103,13 @@ class LangChainInstrumentor(BaseInstrumentor):
         if not self._patched or self._handler is None:
             return
 
-        # Restore the ContextVar to its previous value (None by default).
-        if self._ctx_token is not None:
-            try:
-                _tracecast_handler_var.reset(self._ctx_token)
-            except ValueError:
-                # Token already consumed or from a different context — fall back
-                # to explicitly clearing the var.
-                _tracecast_handler_var.set(None)
-            self._ctx_token = None
-        else:
-            _tracecast_handler_var.set(None)
-
+        # Use set(None) rather than reset() — reset() is only safe in strict
+        # LIFO order within the same Context; any out-of-order call raises
+        # ValueError or silently corrupts state.  set(None) is always safe for
+        # the single-instance use case.
+        _tracecast_handler_var.set(None)
         self._handler = None
+        self._ctx_token = None
         self._patched = False
 
     def is_patched(self) -> bool:

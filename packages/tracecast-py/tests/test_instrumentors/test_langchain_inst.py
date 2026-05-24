@@ -85,14 +85,27 @@ class TestLangChainInstrumentor:
         inst.unpatch()
         assert _tracecast_handler_var.get() is None
 
-    def test_handler_is_tracecast_callback(self):
-        """The registered handler must be a TraceCastCallback instance."""
-        from tracecast.integrations.langchain import TraceCastCallback
+    def test_handler_is_lazy_handler(self):
+        """The registered handler must be a _LazyHandler (lazy tracer resolution)."""
+        from tracecast.instrumentors.langchain_inst import _LazyHandler
 
         inst = LangChainInstrumentor()
         inst.patch()
-        assert isinstance(inst._handler, TraceCastCallback)
+        assert isinstance(inst._handler, _LazyHandler), (
+            "Handler should be _LazyHandler so the tracer is resolved at call time"
+        )
         inst.unpatch()
+
+    def test_lazy_handler_delegates_to_tracecast_callback(self):
+        """_LazyHandler must delegate attribute access to a real TraceCastCallback."""
+        from tracecast.integrations.langchain import TraceCastCallback
+        from tracecast.instrumentors.langchain_inst import _LazyHandler
+
+        handler = _LazyHandler()
+        # Accessing any callback method should return the bound method from a
+        # freshly-created TraceCastCallback.
+        method = handler.on_llm_start
+        assert callable(method), "on_llm_start should be callable via _LazyHandler"
 
     # ------------------------------------------------------------------
     # Full CallbackManager integration tests
@@ -130,16 +143,16 @@ class TestLangChainInstrumentor:
     def test_idempotent_patch_single_handler_in_callback_manager(self):
         """Calling patch() twice should result in exactly one handler in CallbackManager."""
         from langchain_core.callbacks.manager import CallbackManager
-        from tracecast.integrations.langchain import TraceCastCallback
+        from tracecast.instrumentors.langchain_inst import _LazyHandler
 
         inst = LangChainInstrumentor()
         inst.patch()
         inst.patch()  # no-op
 
         cm = CallbackManager.configure()
-        tracecast_handlers = [h for h in cm.handlers if isinstance(h, TraceCastCallback)]
+        tracecast_handlers = [h for h in cm.handlers if isinstance(h, _LazyHandler)]
         assert len(tracecast_handlers) == 1, (
-            f"Expected exactly 1 TraceCastCallback, found {len(tracecast_handlers)}"
+            f"Expected exactly 1 _LazyHandler, found {len(tracecast_handlers)}"
         )
         inst.unpatch()
 
@@ -156,3 +169,36 @@ class TestLangChainInstrumentor:
         inst1.unpatch()
         assert not inst1.is_patched()
         assert not inst2.is_patched()
+
+    # ------------------------------------------------------------------
+    # ImportError tests
+    # ------------------------------------------------------------------
+
+    def test_import_error_when_langchain_not_installed(self):
+        """patch() must raise ImportError when langchain_core is not available."""
+        import sys
+        import importlib
+        from unittest.mock import patch as mock_patch
+
+        # Hide langchain_core and all relevant sub-modules.
+        hidden = {
+            "langchain_core": None,
+            "langchain_core.tracers": None,
+            "langchain_core.tracers.context": None,
+        }
+        with mock_patch.dict(sys.modules, hidden):
+            # Force a fresh import so _ensure_hook_registered sees the patched
+            # sys.modules (the module-level _hook_registered flag may already be
+            # True from earlier tests, but _ensure_hook_registered is re-entered
+            # when we reload).
+            import tracecast.instrumentors.langchain_inst as _mod
+            original_registered = _mod._hook_registered
+            # Reset the flag so the hook-registration path is exercised.
+            _mod._hook_registered = False
+            try:
+                inst = LangChainInstrumentor()
+                with pytest.raises(ImportError):
+                    inst.patch()
+            finally:
+                # Restore the flag so subsequent tests are not affected.
+                _mod._hook_registered = original_registered
