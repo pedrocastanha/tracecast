@@ -1,0 +1,30 @@
+import { useState, useEffect } from "react";
+
+const BASE = "./api";
+
+export function useApi<T>(path: string, deps: unknown[] = []): { data: T | null; loading: boolean; error: string | null } {
+  const [data, setData] = useState<T | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    fetch(`${BASE}${path}`)
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then(setData)
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+
+  return { data, loading, error };
+}
+
+export async function fetchApi<T>(path: string): Promise<T> {
+  const resp = await fetch(`${BASE}${path}`);
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return resp.json();
+}
