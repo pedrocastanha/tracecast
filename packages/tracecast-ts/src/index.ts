@@ -6,4 +6,5 @@ export { TraceCastCallback } from "./integrations/langchain";
 export { traceLLMCall, wrapOpenAI, wrapAnthropic, setDefaultTracer } from "./integrations/llm";
 export { traceCast } from "./decorators";
 export { traceCastMiddleware } from "./middleware";
+export { autoInstrument } from "./instrument";
 export * from "./types";
