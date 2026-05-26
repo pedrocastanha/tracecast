@@ -36,3 +36,5 @@ Thumbs.db
 # Worktrees internos
 .worktrees/
 .claude
+.tracecast-smoke/
+smoke_projects/node_http/package-lock.json

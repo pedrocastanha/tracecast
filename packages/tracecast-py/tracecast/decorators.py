@@ -57,12 +57,11 @@ def _make_wrapper(
     project_id: Optional[str],
     metadata: Optional[dict],
 ):
-    active_tracer = tracer or _default_tracer or Tracer()
-
     if asyncio.iscoroutinefunction(fn):
 
         @functools.wraps(fn)
         async def async_wrapper(*args: Any, **kwargs: Any):
+            active_tracer = tracer or _default_tracer or Tracer()
             async with active_tracer.atrace(
                 name,
                 session_id=session_id,
@@ -76,6 +75,7 @@ def _make_wrapper(
 
     @functools.wraps(fn)
     def sync_wrapper(*args: Any, **kwargs: Any):
+        active_tracer = tracer or _default_tracer or Tracer()
         with active_tracer.trace(
             name,
             session_id=session_id,

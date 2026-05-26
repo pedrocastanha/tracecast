@@ -1,0 +1,2 @@
+../../packages/tracecast-py[dashboard]
+httpx>=0.28

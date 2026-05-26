@@ -9,6 +9,10 @@ export function setDefaultTracer(tracer: Tracer): void {
   _defaultTracer = tracer;
 }
 
+export function getDefaultTracer(): Tracer | null {
+  return _defaultTracer;
+}
+
 function resolveTracer(): Tracer {
   return _defaultTracer ?? new Tracer();
 }

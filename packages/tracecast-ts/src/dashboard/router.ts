@@ -1,4 +1,4 @@
-import express, { Router, Request, Response } from "express";
+import { IncomingMessage, ServerResponse } from "http";
 import { TraceReader } from "./reader";
 import { computeMetrics, paginateTraces } from "./aggregator";
 import { Trace } from "../types";
@@ -6,6 +6,8 @@ import path from "path";
 import fs from "fs";
 
 const STATIC_DIR = path.join(__dirname, "static");
+
+export type DashboardHandler = (req: IncomingMessage, res: ServerResponse, next?: () => void) => void;
 
 function traceSummary(t: Trace) {
   return {
@@ -20,131 +22,194 @@ function traceSummary(t: Trace) {
   };
 }
 
-function qs(val: any): string | undefined {
-  if (typeof val === "string") return val;
-  if (Array.isArray(val)) return val[0];
-  return undefined;
+function one(val: string | null): string | undefined {
+  return val === null ? undefined : val;
 }
 
-export function createRouter(reader: TraceReader): Router {
-  const router = Router();
+function sendJson(res: ServerResponse, status: number, body: unknown): void {
+  const payload = JSON.stringify(body);
+  res.writeHead(status, {
+    "content-type": "application/json; charset=utf-8",
+    "content-length": Buffer.byteLength(payload),
+  });
+  res.end(payload);
+}
 
-  router.use(express.json());
+function sendText(res: ServerResponse, status: number, body: string, contentType = "text/plain; charset=utf-8"): void {
+  res.writeHead(status, {
+    "content-type": contentType,
+    "content-length": Buffer.byteLength(body),
+  });
+  res.end(body);
+}
 
-  router.get("/api/traces", (req: Request, res: Response) => {
-    try {
-      const page = parseInt(qs(req.query.page) || "1");
-      const pageSize = parseInt(qs(req.query.page_size) || "50");
-      const from = qs(req.query.from) ? new Date(qs(req.query.from)!) : undefined;
-      const to = qs(req.query.to) ? new Date(qs(req.query.to)!) : undefined;
+function mime(filename: string): string {
+  if (filename.endsWith(".html")) return "text/html; charset=utf-8";
+  if (filename.endsWith(".css")) return "text/css; charset=utf-8";
+  if (filename.endsWith(".js")) return "application/javascript; charset=utf-8";
+  if (filename.endsWith(".svg")) return "image/svg+xml";
+  if (filename.endsWith(".png")) return "image/png";
+  return "application/octet-stream";
+}
 
-      reader.getTraces().then(traces => {
-        const result = paginateTraces(traces, {
-          page, pageSize,
-          projectId: qs(req.query.project_id),
-          userId: qs(req.query.user_id),
-          from, to,
-          sortBy: qs(req.query.sort_by) ?? "date",
-          order: qs(req.query.order) ?? "desc",
-        });
-        res.json(result);
-      }).catch(err => {
-        res.status(500).json({ error: err.message });
-      });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
+function sendFile(res: ServerResponse, filePath: string): void {
+  const content = fs.readFileSync(filePath);
+  res.writeHead(200, {
+    "content-type": mime(filePath),
+    "content-length": content.length,
+  });
+  res.end(content);
+}
+
+function staticPath(...parts: string[]): string | null {
+  const fp = path.resolve(STATIC_DIR, ...parts);
+  if (!fp.startsWith(STATIC_DIR + path.sep) && fp !== STATIC_DIR) return null;
+  return fp;
+}
+
+function parseRequest(req: IncomingMessage): URL {
+  return new URL(req.url ?? "/", "http://tracecast.local");
+}
+
+export function createRouter(reader: TraceReader): DashboardHandler {
+  return (req: IncomingMessage, res: ServerResponse) => {
+    void handleRequest(reader, req, res);
+  };
+}
+
+async function handleRequest(reader: TraceReader, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  try {
+    if ((req.method ?? "GET") !== "GET") {
+      sendJson(res, 405, { error: "Method not allowed" });
+      return;
     }
-  });
 
-  router.get("/api/traces/:traceId", (req: Request, res: Response) => {
-    reader.getTrace(qs(req.params.traceId)!).then(trace => {
-      if (!trace) return res.status(404).json({ error: "Trace not found" });
-      res.json(trace);
-    }).catch(err => {
-      res.status(500).json({ error: err.message });
-    });
-  });
+    const url = parseRequest(req);
+    const requestPath = url.pathname.replace(/\/+$/, "") || "/";
+    const segments = requestPath.split("/").filter(Boolean).map(decodeURIComponent);
 
-  router.get("/api/metrics", (req: Request, res: Response) => {
-    const from = qs(req.query.from) ? new Date(qs(req.query.from)!) : undefined;
-    const to = qs(req.query.to) ? new Date(qs(req.query.to)!) : undefined;
+    if (requestPath === "/api/traces") {
+      const page = parseInt(one(url.searchParams.get("page")) ?? "1");
+      const pageSize = parseInt(one(url.searchParams.get("page_size")) ?? "50");
+      const from = one(url.searchParams.get("from")) ? new Date(one(url.searchParams.get("from"))!) : undefined;
+      const to = one(url.searchParams.get("to")) ? new Date(one(url.searchParams.get("to"))!) : undefined;
+      const traces = await reader.getTraces();
+      sendJson(res, 200, paginateTraces(traces, {
+        page,
+        pageSize,
+        projectId: one(url.searchParams.get("project_id")),
+        userId: one(url.searchParams.get("user_id")),
+        from,
+        to,
+        sortBy: one(url.searchParams.get("sort_by")) ?? "date",
+        order: one(url.searchParams.get("order")) ?? "desc",
+      }));
+      return;
+    }
 
-    reader.getTraces().then(traces => {
-      const result = computeMetrics(traces, {
-        period: qs(req.query.period) ?? "7d",
-        from, to,
-        projectId: qs(req.query.project_id) as string,
-      });
-      res.json(result);
-    }).catch(err => {
-      res.status(500).json({ error: err.message });
-    });
-  });
+    if (segments[0] === "api" && segments[1] === "traces" && segments[2]) {
+      const trace = await reader.getTrace(segments[2]);
+      if (!trace) sendJson(res, 404, { error: "Trace not found" });
+      else sendJson(res, 200, trace);
+      return;
+    }
 
-  router.get("/api/sessions", (_req: Request, res: Response) => {
-    reader.getSessions()
-      .then(sessions => res.json({ sessions, total: sessions.length }))
-      .catch(err => res.status(500).json({ error: err.message }));
-  });
+    if (requestPath === "/api/metrics") {
+      const from = one(url.searchParams.get("from")) ? new Date(one(url.searchParams.get("from"))!) : undefined;
+      const to = one(url.searchParams.get("to")) ? new Date(one(url.searchParams.get("to"))!) : undefined;
+      const traces = await reader.getTraces();
+      sendJson(res, 200, computeMetrics(traces, {
+        period: one(url.searchParams.get("period")) ?? "7d",
+        from,
+        to,
+        projectId: one(url.searchParams.get("project_id")),
+      }));
+      return;
+    }
 
-  router.get("/api/sessions/:sessionId", (req: Request, res: Response) => {
-    reader.getSession(qs(req.params.sessionId)!).then(traces => {
-      if (!traces.length) return res.status(404).json({ error: "Session not found" });
-      const totalCost = traces.reduce((s, t) => s + t.costUsd, 0);
-      const totalTokens = traces.reduce((s, t) => s + t.totalTokens, 0);
-      res.json({
-        session_id: req.params.sessionId,
+    if (requestPath === "/api/sessions") {
+      const sessions = await reader.getSessions();
+      sendJson(res, 200, { sessions, total: sessions.length });
+      return;
+    }
+
+    if (segments[0] === "api" && segments[1] === "sessions" && segments[2]) {
+      const traces = await reader.getSession(segments[2]);
+      if (!traces.length) {
+        sendJson(res, 404, { error: "Session not found" });
+        return;
+      }
+      sendJson(res, 200, {
+        session_id: segments[2],
         traces: traces.map(traceSummary),
-        total_cost_usd: Math.round(totalCost * 1e6) / 1e6,
-        total_tokens: totalTokens,
+        total_cost_usd: Math.round(traces.reduce((s, t) => s + t.costUsd, 0) * 1e6) / 1e6,
+        total_tokens: traces.reduce((s, t) => s + t.totalTokens, 0),
       });
-    }).catch(err => res.status(500).json({ error: err.message }));
-  });
+      return;
+    }
 
-  router.get("/api/projects", (_req: Request, res: Response) => {
-    reader.getProjects()
-      .then(projects => res.json({ projects, total: projects.length }))
-      .catch(err => res.status(500).json({ error: err.message }));
-  });
+    if (requestPath === "/api/projects") {
+      const projects = await reader.getProjects();
+      sendJson(res, 200, { projects, total: projects.length });
+      return;
+    }
 
-  router.get("/api/projects/:projectId", (req: Request, res: Response) => {
-    reader.getProject(qs(req.params.projectId)!).then(traces => {
-      if (!traces.length) return res.status(404).json({ error: "Project not found" });
-      const totalCost = traces.reduce((s, t) => s + t.costUsd, 0);
-      const totalTokens = traces.reduce((s, t) => s + t.totalTokens, 0);
-      res.json({
-        project_id: req.params.projectId,
+    if (segments[0] === "api" && segments[1] === "projects" && segments[2]) {
+      const traces = await reader.getProject(segments[2]);
+      if (!traces.length) {
+        sendJson(res, 404, { error: "Project not found" });
+        return;
+      }
+      sendJson(res, 200, {
+        project_id: segments[2],
         traces: traces.map(traceSummary),
-        total_cost_usd: Math.round(totalCost * 1e6) / 1e6,
-        total_tokens: totalTokens,
+        total_cost_usd: Math.round(traces.reduce((s, t) => s + t.costUsd, 0) * 1e6) / 1e6,
+        total_tokens: traces.reduce((s, t) => s + t.totalTokens, 0),
       });
-    }).catch(err => res.status(500).json({ error: err.message }));
-  });
+      return;
+    }
 
-  router.get("/api/health", (_req: Request, res: Response) => {
-    res.json({ status: "ok", version: "0.3.0" });
-  });
+    if (requestPath === "/api/health") {
+      sendJson(res, 200, { status: "ok", version: "0.3.0" });
+      return;
+    }
 
-  router.get("/", (_req: Request, res: Response) => {
+    if (segments[0] === "static" && segments[1]) {
+      const fp = staticPath(segments[1]);
+      if (!fp) {
+        sendText(res, 400, "Invalid path");
+      } else if (fs.existsSync(fp)) {
+        sendFile(res, fp);
+      } else {
+        sendText(res, 404, "Not found");
+      }
+      return;
+    }
+
+    if (segments[0] === "assets" && segments.length > 1) {
+      const fp = staticPath("assets", ...segments.slice(1));
+      if (!fp) {
+        sendText(res, 400, "Invalid path");
+      } else if (fs.existsSync(fp)) {
+        sendFile(res, fp);
+      } else {
+        sendText(res, 404, "Not found");
+      }
+      return;
+    }
+
+    if (segments[0] === "api") {
+      sendJson(res, 404, { error: "Not found" });
+      return;
+    }
+
     const indexPath = path.join(STATIC_DIR, "index.html");
     if (fs.existsSync(indexPath)) {
-      res.sendFile(indexPath);
+      sendFile(res, indexPath);
     } else {
-      res.send("<h1>TraceCast Dashboard</h1>");
+      sendText(res, 200, "<h1>TraceCast Dashboard</h1>", "text/html; charset=utf-8");
     }
-  });
-
-  router.get("/static/:filename", (req: Request, res: Response) => {
-    const fp = path.resolve(STATIC_DIR, qs(req.params.filename)!);
-    if (!fp.startsWith(STATIC_DIR + path.sep) && fp !== STATIC_DIR) {
-      return res.status(400).send("Invalid path");
-    }
-    if (fs.existsSync(fp)) {
-      res.sendFile(fp);
-    } else {
-      res.status(404).send("Not found");
-    }
-  });
-
-  return router;
+  } catch (err: any) {
+    sendJson(res, 500, { error: err?.message ?? String(err) });
+  }
 }

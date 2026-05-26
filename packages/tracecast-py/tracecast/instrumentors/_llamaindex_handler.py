@@ -155,9 +155,11 @@ def _build_handler_class():
         from llama_index_instrumentation.span_handlers.base import BaseSpanHandler
         from llama_index_instrumentation.span.simple import SimpleSpan
     except ImportError:
-        # Older monolithic llama_index layout (< 0.10) – fall back gracefully
-        from llama_index.core.instrumentation.span_handlers.base import BaseSpanHandler  # type: ignore[no-redef]
-        from llama_index.core.instrumentation.span.simple import SimpleSpan  # type: ignore[no-redef]
+        try:
+            from llama_index.core.instrumentation.span_handlers.base import BaseSpanHandler  # type: ignore[no-redef]
+            from llama_index.core.instrumentation.span.simple import SimpleSpan  # type: ignore[no-redef]
+        except ImportError:
+            return TraceCastSpanHandler
 
     class _TraceCastSpanHandlerReal(BaseSpanHandler[SimpleSpan]):
         """Proper BaseSpanHandler subclass for production LlamaIndex usage."""

@@ -1,6 +1,6 @@
 import { Tracer } from "./core/tracer";
 import { Trace } from "./types";
-import { setDefaultTracer } from "./integrations/llm";
+import { getDefaultTracer, setDefaultTracer } from "./integrations/llm";
 
 export { setDefaultTracer };
 
@@ -18,9 +18,9 @@ export function traceCast<T extends (...args: any[]) => any>(
   opts: TraceCastOpts = {},
 ): T {
   const name = opts.name ?? `${fn.name || "anonymous"}`;
-  const tracer = opts.tracer ?? new Tracer();
 
   const wrapper = async function (this: any, ...args: any[]) {
+    const tracer = opts.tracer ?? getDefaultTracer() ?? new Tracer();
     return tracer.trace(
       name,
       async (_trace: Trace) => fn.apply(this, args),

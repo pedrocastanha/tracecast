@@ -61,7 +61,7 @@
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/copy-dashboard-static.mjs",
     "test": "jest --passWithNoTests",
     "prepublishOnly": "npm run build && npm test"
   },

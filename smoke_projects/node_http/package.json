@@ -1,0 +1,11 @@
+{
+  "name": "tracecast-node-http-smoke",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "smoke": "node smoke.js"
+  },
+  "dependencies": {
+    "tracecast": "file:../../packages/tracecast-ts"
+  }
+}
