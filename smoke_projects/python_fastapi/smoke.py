@@ -15,7 +15,12 @@ assert "TraceCast" in dashboard.text
 traces = client.get("/observability/api/traces")
 assert traces.status_code == 200, traces.text
 payload = traces.json()
-assert payload["traces"][0]["name"] == "python-smoke-chat"
-assert payload["traces"][0]["project_id"] == "real-python"
+trace = payload["traces"][0]
+assert trace["name"] == "python-smoke-chat"
+assert trace["project_id"] == "real-python"
+assert trace["total_tokens_in"] == 90
+assert trace["total_tokens_out"] == 30
+assert trace["total_tokens_in_cached"] == 20
+assert trace["total_tokens"] == 120
 
 print("python-fastapi-smoke ok")

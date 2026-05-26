@@ -1,8 +1,29 @@
 const http = require("http");
-const { DictExporter, Tracer, setDefaultTracer, traceCast } = require("tracecast");
+const { DictExporter, Tracer, setDefaultTracer, traceCast, wrapOpenAI } = require("tracecast");
 
 const exporter = new DictExporter();
-const runChat = traceCast(async () => ({ reply: "ok" }), {
+const client = wrapOpenAI({
+  chat: {
+    completions: {
+      create: async (kwargs) => ({
+        model: kwargs.model,
+        usage: {
+          prompt_tokens: 90,
+          completion_tokens: 30,
+          prompt_tokens_details: { cached_tokens: 20 },
+        },
+        choices: [{ message: { content: "ok" } }],
+      }),
+    },
+  },
+});
+const runChat = traceCast(async () => {
+  const response = await client.chat.completions.create({
+    model: "gpt-4o",
+    messages: [{ role: "user", content: "hello" }],
+  });
+  return { reply: response.choices[0].message.content };
+}, {
   name: "node-smoke-chat",
   projectId: "real-node",
 });
@@ -69,8 +90,13 @@ async function main() {
     const traces = await request(port, "/observability/api/traces");
     if (traces.status !== 200) throw new Error(traces.body);
     const payload = JSON.parse(traces.body);
-    if (payload.traces[0].name !== "node-smoke-chat") throw new Error(traces.body);
-    if (payload.traces[0].project_id !== "real-node") throw new Error(traces.body);
+    const trace = payload.traces[0];
+    if (trace.name !== "node-smoke-chat") throw new Error(traces.body);
+    if (trace.project_id !== "real-node") throw new Error(traces.body);
+    if (trace.total_tokens_in !== 90) throw new Error(traces.body);
+    if (trace.total_tokens_out !== 30) throw new Error(traces.body);
+    if (trace.total_tokens_in_cached !== 20) throw new Error(traces.body);
+    if (trace.total_tokens !== 120) throw new Error(traces.body);
 
     console.log("node-http-smoke ok");
   } finally {
