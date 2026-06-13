@@ -1,58 +1,68 @@
 # TraceCast
 
-> **SDK de observabilidade para LLMs** — rastreie tokens, custo, latência e tool calls em qualquer framework de IA. Python · TypeScript · Framework-Agnostic.
+> **SDK de observabilidade para LLMs** — rastreie tokens, custo, latência, tool calls e o **grafo completo** de agentes em qualquer framework de IA. Self-hosted, framework-agnostic, Python.
 
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://pypi.org/project/tracecast/)
-[![npm](https://img.shields.io/badge/npm-tracecast-red)](https://www.npmjs.com/package/tracecast)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Tests: 128 Python + 113 TypeScript](https://img.shields.io/badge/tests-128%20%2B%20113-brightgreen)](#)
+[![Tests](https://img.shields.io/badge/tests-242%20passing-brightgreen)](#testes)
 
 ---
 
 ## O que é
 
-TraceCast é um SDK leve que **captura automaticamente** cada interação com LLMs e as exporta para onde você precisar — MongoDB, PostgreSQL, arquivo JSONL, ou qualquer destino customizado.
+TraceCast captura **automaticamente** cada interação dentro de uma request de IA — nós, arestas,
+guardrails, chamadas LLM e tools — e exporta para onde você quiser: MongoDB, PostgreSQL, arquivo JSONL,
+ou qualquer destino customizado. Um dashboard self-hosted permite visualizar o **grafo percorrido**,
+filtrar traces e inspecionar cada etapa.
 
-- **Zero vendor lock-in** — funciona com OpenAI, Anthropic, Google, Groq, Ollama, e qualquer SDK compatível.
-- **Zero configuração** para LangChain/LangGraph — um callback resolve tudo.
+- **Captura o fluxo inteiro** — hierarquia pai→filho de spans e arestas (`from → to`) reconstroem o grafo.
+- **Zero configuração** para LangChain/LangGraph — um callback (ou `auto_instrument()`) resolve tudo.
+- **Dados confiáveis** — tokens (incl. streaming e cache), custo, latência e status por etapa.
+- **Save resiliente** — falhas de export são logadas e expostas por hook, nunca silenciosas.
+- **Dashboard separável** — rode embutido no app ou standalone numa VM lendo o storage remoto.
 - **Zero dependências core** — instale só o que for usar.
-- **Exemplos Reais** — Veja a pasta `real_examples/` em cada pacote para implementações completas.
 
 ---
 
 ## Instalação
 
-### Python
-
 ```bash
-#Core (sem dependências)
+# Core (sem dependências)
 pip install tracecast
 
-# Com suporte a MongoDB
-pip install "tracecast[mongo]"
-
-# Com suporte a LangChain / LangGraph
-pip install "tracecast[langchain]"
-
-# Tudo junto
-pip install "tracecast[all]"
-```
-
-### TypeScript / Node.js
-
-```bash
-npm install tracecast
-
-# Opcionais — instale apenas o que for usar
-npm install mongodb   # para MongoExporter
-npm install pg        # para PostgresExporter
+# Extras
+pip install "tracecast[mongo]"      # MongoExporter
+pip install "tracecast[postgres]"   # PostgresExporter
+pip install "tracecast[langchain]"  # LangChain / LangGraph
+pip install "tracecast[dashboard]"  # FastAPI + uvicorn (dashboard/servidor)
+pip install "tracecast[all]"        # tudo
 ```
 
 ---
 
-## Inicio Rápido
+## Início rápido
 
-### Python
+### LangGraph / LangChain (captura automática)
+
+```python
+from tracecast import Tracer, auto_instrument
+from tracecast.exporters.mongo import MongoExporter
+
+tracer = Tracer(exporters=[MongoExporter("mongodb://localhost:27017", db="myapp")], logging=True)
+auto_instrument(tracer)  # registra o callback global do LangChain
+
+# decore a função/rota que inicia a request
+from tracecast import trace_cast
+
+@trace_cast(project_id="suporte", user_id="u1")
+def handle(message: str):
+    return app.invoke({"messages": [message]})  # seu StateGraph compilado
+```
+
+Cada nó do grafo vira um span com pai correto; arestas percorridas são derivadas automaticamente.
+Tokens, custo, latência e status são preenchidos por chamada e agregados no trace.
+
+### Span manual
 
 ```python
 from tracecast import Tracer, Span, SpanType, calculate_cost
@@ -60,14 +70,9 @@ from tracecast.exporters import JsonFileExporter
 from datetime import datetime, timezone
 import uuid
 
-tracer = Tracer(
-    exporters=[JsonFileExporter("./traces.jsonl")],
-    logging=True,
-    log_prefix="meu_agente",
-)
+tracer = Tracer(exporters=[JsonFileExporter("./traces.jsonl")])
 
 with tracer.trace("minha_run", user_id="usr_1") as trace:
-    # sua chamada LLM aqui
     span = Span(
         span_id=str(uuid.uuid4()),
         type=SpanType.LLM,
@@ -80,582 +85,220 @@ with tracer.trace("minha_run", user_id="usr_1") as trace:
     )
     span.cost_usd = calculate_cost("gpt-4o", span.tokens_in, span.tokens_out)
     trace.spans.append(span)
-# → trace exportado automaticamente ao sair do `with`
-```
-
-### TypeScript
-
-```typescript
-import { Tracer, JsonFileExporter, SpanType, calculateCost } from "tracecast";
-import { randomUUID } from "crypto";
-
-const tracer = new Tracer({
-  exporters: [new JsonFileExporter("./traces.jsonl")],
-  logging: true,
-  logPrefix: "meu_agente",
-});
-
-await tracer.trace("minha_run", async (trace) => {
-  const span = {
-    spanId: randomUUID(),
-    type: SpanType.LLM,
-    name: "llm:gpt-4o",
-    model: "gpt-4o",
-    startedAt: new Date(),
-    finishedAt: new Date(),
-    tokensIn: 120,
-    tokensOut: 80,
-    costUsd: calculateCost("gpt-4o", 120, 80),
-  };
-  trace.spans.push(span);
-}, { userId: "usr_1" });
 ```
 
 ---
 
-## Frameworks Suportados
+## Decorators
 
-### SDK Puro (OpenAI, Anthropic, Google, Groq...)
+| Decorator | Uso |
+|-----------|-----|
+| `@trace_cast(...)` | Abre um **trace** (request inteira). Coloque na rota/handler de entrada. Sync e async. |
+| `@trace_span(name=..., type=...)` | Cria um **span filho** para qualquer função (guardrails, validações, etapas). Captura input/output/latência/status. Aninha sob o span ativo. |
 
-Crie spans manualmente com os dados de uso retornados pelo SDK.
+```python
+from tracecast import trace_cast, trace_span
+from tracecast.models.span import SpanType
 
-**Python**
+@trace_span(name="guardrail_pii", type=SpanType.TOOL)
+def check_pii(text: str) -> str:
+    ...
+    return cleaned
+
+@trace_cast(project_id="suporte")
+async def handle(req):
+    safe = check_pii(req.text)     # vira span filho com input/output
+    return await agent.ainvoke(safe)
+```
+
+---
+
+## Frameworks
+
+### OpenAI / Anthropic (auto-instrument, inclui streaming)
+
 ```python
 import openai
-from tracecast import Tracer, Span, SpanType, calculate_cost
-from tracecast.exporters import JsonFileExporter
-from datetime import datetime, timezone
-import uuid
+from tracecast import Tracer, auto_instrument
+
+tracer = Tracer(exporters=[...])
+auto_instrument(tracer)            # faz patch em openai/anthropic/gemini
 
 client = openai.OpenAI()
-tracer = Tracer(exporters=[JsonFileExporter("./traces.jsonl")], logging=True)
-
-with tracer.trace("openai-run", user_id="u1") as trace:
-    started = datetime.now(timezone.utc)
-    resp = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[{"role": "user", "content": "Olá!"}]
+with tracer.trace("openai-run"):
+    # não-streaming e streaming são capturados (tokens via include_usage)
+    stream = client.chat.completions.create(
+        model="gpt-4o", messages=[{"role": "user", "content": "Olá!"}], stream=True,
     )
-    finished = datetime.now(timezone.utc)
-
-    span = Span(
-        span_id=str(uuid.uuid4()),
-        type=SpanType.LLM,
-        name="llm:gpt-4o",
-        model="gpt-4o",
-        started_at=started,
-        finished_at=finished,
-        tokens_in=resp.usage.prompt_tokens,
-        tokens_out=resp.usage.completion_tokens,
-    )
-    span.cost_usd = calculate_cost("gpt-4o", span.tokens_in, span.tokens_out)
-    trace.spans.append(span)
+    for chunk in stream:
+        ...
 ```
 
-**TypeScript**
-```typescript
-import OpenAI from "openai";
-import { Tracer, JsonFileExporter, SpanType, calculateCost } from "tracecast";
-import { randomUUID } from "crypto";
+Alternativa explícita sem patch global: `wrap_openai(client)` / `wrap_anthropic(client)`.
 
-const client = new OpenAI();
-const tracer = new Tracer({ exporters: [new JsonFileExporter("./traces.jsonl")], logging: true });
+### CrewAI / LlamaIndex
 
-await tracer.trace("openai-run", async (trace) => {
-  const start = new Date();
-  const resp = await client.chat.completions.create({
-    model: "gpt-4o",
-    messages: [{ role: "user", content: "Olá!" }],
-  });
-  trace.spans.push({
-    spanId: randomUUID(),
-    type: SpanType.LLM,
-    name: "llm:gpt-4o",
-    model: "gpt-4o",
-    startedAt: start,
-    finishedAt: new Date(),
-    tokensIn: resp.usage!.prompt_tokens,
-    tokensOut: resp.usage!.completion_tokens,
-    costUsd: calculateCost("gpt-4o", resp.usage!.prompt_tokens, resp.usage!.completion_tokens),
-  });
-}, { userId: "u1" });
+`auto_instrument()` registra os instrumentors disponíveis. Veja `real_examples/` para setups completos.
+
+---
+
+## Propagação de contexto em threads
+
+ContextVars propagam para tasks asyncio filhas, mas **não** para threads (`run_in_executor`/ThreadPool).
+Use `bind_context` para capturar o trace ativo e rodar a função no worker:
+
+```python
+from tracecast import bind_context
+
+# ThreadPoolExecutor
+pool.submit(bind_context(node_fn, state))
+
+# asyncio executor
+await loop.run_in_executor(None, bind_context(node_fn, state))
 ```
 
 ---
 
-### LangChain
+## Exporters
 
-O `TraceCastCallback` intercepta automaticamente todos os eventos LLM, Tool e Chain — nenhum código extra necessário.
-
-**Python**
-```python
-from tracecast import Tracer
-from tracecast.exporters import JsonFileExporter
-from tracecast.integrations.langchain import TraceCastCallback
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
-
-tracer = Tracer(
-    exporters=[JsonFileExporter("./traces.jsonl")],
-    logging=True,
-    log_prefix="langchain_agent",
-)
-callback = TraceCastCallback(tracer=tracer)
-
-# stream_usage=True garante token tracking quando usar AgentExecutor
-llm = ChatOpenAI(model="gpt-4o-mini", stream_usage=True)
-prompt = ChatPromptTemplate.from_messages([("user", "{input}")])
-chain = prompt | llm
-
-with tracer.trace("langchain-run", user_id="u1"):
-    result = chain.invoke({"input": "Olá!"}, config={"callbacks": [callback]})
-```
-
-**TypeScript**
-```typescript
-import { Tracer, JsonFileExporter } from "tracecast";
-import { TraceCastCallback } from "tracecast/integrations/langchain";
-import { ChatOpenAI } from "@langchain/openai";
-import { ChatPromptTemplate } from "@langchain/core/prompts";
-
-const tracer = new Tracer({
-  exporters: [new JsonFileExporter("./traces.jsonl")],
-  logging: true,
-  logPrefix: "langchain_agent",
-});
-const cb = new TraceCastCallback(tracer);
-
-// streamUsage: true garante token tracking quando usar AgentExecutor
-const llm = new ChatOpenAI({ model: "gpt-4o-mini", streamUsage: true });
-const prompt = ChatPromptTemplate.fromMessages([["user", "{input}"]]);
-const chain = prompt.pipe(llm as any);
-
-await tracer.trace("langchain-run", async () => {
-  await chain.invoke({ input: "Olá!" }, { callbacks: [cb] });
-}, { userId: "u1" });
-```
-
-**O que é capturado automaticamente:**
-- `LLM started → modelo` ao chamar o LLM
-- `LLM end → modelo | tokens: X in / Y out | $custo | latência` ao concluir
-- `Tool call → nome | input` ao invocar uma tool
-- `Tool end → nome | latência` ao retornar
-- `Chain → nome` para o nó raiz (LangGraph/Chains)
-
----
-
-### LangGraph
-
-LangGraph usa o mesmo `TraceCastCallback` — cada nó do `StateGraph` gera um span `AGENT` automaticamente.
-
-**Python**
-```python
-from tracecast import Tracer
-from tracecast.integrations.langchain import TraceCastCallback
-from langgraph.graph import StateGraph, END
-from typing import TypedDict
-
-tracer = Tracer(logging=True, log_prefix="meu_grafo")
-callback = TraceCastCallback(tracer=tracer)
-
-class State(TypedDict):
-    messages: list
-
-def node_a(state): return {"messages": state["messages"] + ["A"]}
-def node_b(state): return {"messages": state["messages"] + ["B"]}
-
-graph = StateGraph(State)
-graph.add_node("A", node_a)
-graph.add_node("B", node_b)
-graph.add_edge("A", "B")
-graph.add_edge("B", END)
-graph.set_entry_point("A")
-app = graph.compile()
-
-with tracer.trace("grafo-run"):
-    app.invoke({"messages": []}, config={"callbacks": [callback]})
-```
-
-> Cada nó gera um span do tipo `AGENT` com `name: "chain:NomeDoNó"` e latência medida automaticamente.
-
----
-
-### CrewAI
-
-CrewAI usa seu próprio layer de LLM e não propaga callbacks LangChain. Use spans manuais para capturar tokens após o `kickoff()`.
+Todos aceitam `include_fields` / `exclude_fields`. Mongo e Postgres expõem `query/get/count` usados pelo
+dashboard para **filtrar no banco** (data, projeto, usuário, sessão) — sem carregar tudo em memória.
 
 ```python
-from tracecast import Tracer, Span, SpanType, calculate_cost
-from tracecast.exporters import JsonFileExporter
-from crewai import Agent, Task, Crew
-from datetime import datetime, timezone
-import uuid
-
-tracer = Tracer(exporters=[JsonFileExporter("traces.jsonl")], logging=True)
-
-with tracer.trace("crew-run", project_id="proj-crew") as trace:
-    agent = Agent(role="Pesquisador", goal="Pesquisar IA", backstory="...", llm="gpt-4o-mini")
-    task = Task(description="Explique LLMs em 2 frases", expected_output="Texto", agent=agent)
-    crew = Crew(agents=[agent], tasks=[task])
-
-    started = datetime.now(timezone.utc)
-    result = crew.kickoff()
-    finished = datetime.now(timezone.utc)
-
-    # Capture usage do LLM internamente (CrewAI > 1.x expõe usage no result)
-    span = Span(
-        span_id=str(uuid.uuid4()),
-        type=SpanType.LLM,
-        name="llm:gpt-4o-mini",
-        model="gpt-4o-mini",
-        started_at=started,
-        finished_at=finished,
-        tokens_in=120,   # extraia de result.token_usage se disponível
-        tokens_out=45,
-    )
-    span.cost_usd = calculate_cost("gpt-4o-mini", span.tokens_in, span.tokens_out)
-    trace.spans.append(span)
-```
-
-> **Nota**: O log automático de eventos LLM/Tool não está disponível para CrewAI (o framework não expõe hooks). O TraceCast loga automaticamente o início e fim do **trace** completo.
-
----
-
-### LlamaIndex
-
-Use o `LlamaDebugHandler` para capturar eventos LLM e criar spans manualmente.
-
-```python
-from tracecast import Tracer, Span, SpanType, calculate_cost
-from tracecast.exporters import JsonFileExporter
-from llama_index.core.callbacks import CallbackManager, LlamaDebugHandler, CBEventType
-from llama_index.core.llms import MockLLM
-from datetime import datetime, timezone
-import uuid
-
-tracer = Tracer(exporters=[JsonFileExporter("traces.jsonl")], logging=True)
-dbh = LlamaDebugHandler()
-llm = MockLLM(callback_manager=CallbackManager([dbh]))
-
-with tracer.trace("rag-query") as trace:
-    llm.complete("Minha pergunta sobre o documento")
-
-    for event in dbh.get_events():
-        if event.event_type == CBEventType.LLM:
-            span = Span(
-                span_id=str(uuid.uuid4()),
-                type=SpanType.LLM,
-                name=f"llm:{event.payload.get('model', 'unknown')}",
-                model=event.payload.get("model", "unknown"),
-                started_at=datetime.now(timezone.utc),
-                finished_at=datetime.now(timezone.utc),
-                tokens_in=event.payload.get("formatted_prompt_tokens_count", 0),
-                tokens_out=event.payload.get("completion_tokens_count", 0),
-            )
-            span.cost_usd = calculate_cost(span.model, span.tokens_in, span.tokens_out)
-            trace.spans.append(span)
-```
-
----
-
-## 🚀 Exemplos Completos (Módulo real_examples)
-
-Para facilitar a sua implementação, criamos exemplos completos e comentados que simulam cenários reais (como agentes de pesquisa, suporte técnico e análise financeira) em ambas as linguagens.
-
-### Python (`packages/tracecast-py/real_examples/`)
-- [openai_sdk.py](openai_sdk.py) — Funcionamento manual com tools.
-- [anthropic_sdk.py](anthropic_sdk.py) — Claude com tool use extraído.
-- [langchain_agent.py](langchain_agent.py) — Agente financeiro automático.
-- [langgraph_graph.py](langgraph_graph.py) — Orquestração de grafos.
-- [crewai_crew.py](crewai_crew.py) — Multi-agent setup.
-- [llamaindex_index.py](llamaindex_index.py) — RAG com interceptação de eventos.
-
-### TypeScript (`packages/tracecast-ts/real_examples/`)
-- [openaiSdk.ts](openaiSdk.ts) — Análise de código com MongoDB.
-- [langchainAgent.ts](langchainAgent.ts) — Tradução automática.
-- [langgraphAgent.ts](langgraphAgent.ts) — Ciclo de decisão com LangGraph.
-
----
-
-## Exporters e Campos Disponíveis
-
-Cada exporter permite filtrar quais campos serão salvos usando `include_fields` ou `exclude_fields`. Isso é útil para reduzir o tamanho dos logs ou ocultar dados sensíveis.
-
-
-### JsonFileExporter — JSONL (sem dependências)
-
-```python
-from tracecast.exporters import JsonFileExporter
-
-# Salva tudo
-exporter = JsonFileExporter("./traces.jsonl")
-
-# Apenas campos essenciais
-exporter = JsonFileExporter("./traces.jsonl", include_fields={"trace_id", "cost_usd", "total_tokens", "model"})
-
-# Sem spans (mais leve)
-exporter = JsonFileExporter("./traces.jsonl", exclude_fields={"spans"})
-```
-
-```typescript
-import { JsonFileExporter } from "tracecast";
-
-const exporter = new JsonFileExporter("./traces.jsonl", { excludeFields: ["spans"] });
-```
-
-### MongoExporter
-
-```bash
-pip install "tracecast[mongo]"   # Python
-npm install mongodb               # TypeScript
-```
-
-```python
+from tracecast.exporters import JsonFileExporter, DictExporter
 from tracecast.exporters.mongo import MongoExporter
-
-exporter = MongoExporter(
-    uri="mongodb://localhost:27017",
-    db="myapp",
-    collection="traces",
-    include_fields={"trace_id", "cost_usd", "total_tokens", "model", "latency_ms"},
-)
-```
-
-```typescript
-import { MongoExporter } from "tracecast/exporters/mongo";
-
-const exporter = new MongoExporter("mongodb://localhost:27017", "myapp", "traces", {
-  excludeFields: ["spans"],       // economiza espaço
-});
-await exporter.close();           // ao encerrar a aplicação
-```
-
-### PostgresExporter
-
-```bash
-pip install psycopg2-binary   # Python
-npm install pg                 # TypeScript
-```
-
-```python
 from tracecast.exporters.postgres import PostgresExporter
 
-# Tabela criada automaticamente; schema adapta-se a include/exclude
-with PostgresExporter(
-    dsn="postgresql://user:pass@host:5432/db",
-    table="traces",
-    include_fields=["trace_id", "name", "model", "cost_usd", "total_tokens", "latency_ms"],
-) as exporter:
-    tracer = Tracer(exporters=[exporter])
+JsonFileExporter("./traces.jsonl", exclude_fields={"spans"})
+MongoExporter("mongodb://localhost:27017", db="myapp", collection="traces")   # upsert por trace_id
+PostgresExporter("postgresql://user:pass@host:5432/db", table="traces")        # ON CONFLICT upsert
+DictExporter(on_trace=lambda d: fila.put(d))
 ```
 
-```typescript
-import { PostgresExporter } from "tracecast/exporters/postgres";
-
-const exporter = new PostgresExporter("postgresql://user:pass@host:5432/db", "traces", {
-  excludeFields: ["spans", "metadata"],
-});
-await exporter.close();
-```
-
-### DictExporter — sem arquivo, sem banco
-
-Ideal para testes, pipelines customizados ou integração com filas.
-
-```python
-from tracecast.exporters import DictExporter
-
-# Coleta em lista (default)
-exporter = DictExporter()
-tracer = Tracer(exporters=[exporter])
-with tracer.trace("run"):
-    ...
-print(exporter.traces)  # [{"trace_id": ..., "cost_usd": ..., ...}]
-
-# Ou via callback
-exporter = DictExporter(
-    on_trace=lambda d: minha_fila.put(d),
-    include_fields={"trace_id", "cost_usd", "total_tokens"},
-)
-```
-
-```typescript
-import { DictExporter } from "tracecast";
-
-const exporter = new DictExporter({
-  onTrace: (d) => myQueue.push(d),
-  includeFields: ["traceId", "costUsd", "totalTokens"],
-});
-```
-
-### Custom Exporter
+Custom:
 
 ```python
 from tracecast.exporters.base import BaseExporter
 
 class WebhookExporter(BaseExporter):
-    def __init__(self, url: str):
-        self.url = url
+    def __init__(self, url): self.url = url
     def export(self, trace) -> None:
-        import httpx
-        httpx.post(self.url, json=trace.to_dict())
-```
-
-```typescript
-import { BaseExporter } from "tracecast/exporters/base";
-import type { Trace } from "tracecast";
-
-class WebhookExporter implements BaseExporter {
-  constructor(private url: string) {}
-  async export(trace: Trace): Promise<void> {
-    await fetch(this.url, { method: "POST", body: JSON.stringify(trace) });
-  }
-}
+        import httpx; httpx.post(self.url, json=trace.to_dict())
 ```
 
 ---
 
-## Logging Integrado
+## Dashboard
 
-Habilite com um único flag — logs estruturados de todos os eventos LLM/Tool/Chain, sem código extra.
+O dashboard (SPA React) é servido pelo backend Python. Duas formas de uso:
+
+### 1. Embutido no app
 
 ```python
-tracer = Tracer(
-    exporters=[...],
-    logging=True,
-    log_prefix="meu_agente",   # opcional
-)
+from fastapi import FastAPI
+app = FastAPI()
+tracer.mount(app, prefix="/tracecast")   # dashboard em /tracecast, API em /tracecast/api
 ```
 
-```typescript
-const tracer = new Tracer({
-  exporters: [...],
-  logging: true,
-  logPrefix: "meu_agente",
-  // logFn: (msg) => myLogger.info(msg)   // customizável
-});
+### 2. Standalone numa VM (lê o storage remoto)
+
+O servidor não importa o app de produção — só aponta para o mesmo banco.
+
+```bash
+pip install "tracecast[dashboard,mongo]"
+
+export TRACECAST_STORE="mongodb://prod-host:27017"   # postgresql:// ou file:// também
+export TRACECAST_DB="myapp"
+export TRACECAST_PORT=7777
+export TRACECAST_AUTH="admin:senha"                  # basic auth opcional
+export TRACECAST_CORS="https://meu-front.com"        # opcional
+
+tracecast-server
 ```
 
-**Saída:**
+Variáveis: `TRACECAST_STORE` (obrigatória), `TRACECAST_HOST`, `TRACECAST_PORT`, `TRACECAST_PREFIX`,
+`TRACECAST_DB`, `TRACECAST_COLLECTION`, `TRACECAST_TABLE`, `TRACECAST_AUTH`, `TRACECAST_CORS`,
+`TRACECAST_MAX_TRACES`.
+
+**Recursos:** filtros por data/projeto/usuário/sessão (server-side), lista paginada, e visualização do
+**grafo DAG** percorrido (nós + arestas) com detalhe de input/output/tokens/custo/latência/status ao
+clicar em cada etapa.
+
+**API REST** (`{prefix}/api`): `/traces`, `/traces/{id}`, `/traces/{id}/graph`, `/metrics`,
+`/sessions`, `/projects`, `/health`.
+
+---
+
+## Logging integrado
+
+```python
+tracer = Tracer(exporters=[...], logging=True, log_prefix="meu_agente")
+```
+
 ```
 [meu_agente] Trace started
-[meu_agente] LLM started → gpt-4o
-[meu_agente] Tool call → search_web | quem é Pedro Castanheira...
-[meu_agente] Tool end → search_web | 0.82s
 [meu_agente] LLM end → gpt-4o | tokens: 310 in / 95 out | $0.0019 | 2.10s
 [meu_agente] Trace finished → total: 405 tokens | $0.0019 | 3.40s | tools: search_web×1
 ```
 
-- **Python**: usa `logging.getLogger("tracecast")` — configure com `logging.basicConfig` ou qualquer handler.
-- **TypeScript**: usa `console.log` por padrão — injete `logFn`/`warnFn` para redirecionar.
-- Cada linha é garantidamente uma **única linha** (newlines colapsados).
-- Chain logging mostra apenas o **nó raiz** (sem spam de sub-nós internos do LangGraph).
+Usa `logging.getLogger("tracecast")`. Configure com `logging.basicConfig` ou qualquer handler.
 
 ---
 
-## Tabela de Preços Built-in
+## Modelo de dados
 
-| Modelo | Input ($/1K tokens) | Output ($/1K tokens) |
-|--------|---------------------|----------------------|
-| `gpt-5` | 0.00125 | 0.01000 |
-| `gpt-5.4` | 0.00250 | 0.01500 |
-| `gpt-4o` | 0.00250 | 0.01000 |
-| `gpt-4o-mini` | 0.00015 | 0.00060 |
-| `gpt-4.1` | 0.00200 | 0.00800 |
-| `gpt-4.1-mini` | 0.00040 | 0.00160 |
-| `o3` | 0.00200 | 0.00800 |
-| `o4-mini` | 0.00110 | 0.00440 |
-| `claude-opus-4-6` | 0.00500 | 0.02500 |
-| `claude-sonnet-4-6` | 0.00300 | 0.01500 |
-| `claude-haiku-4-5` | 0.00100 | 0.00500 |
-| `claude-sonnet-4` | 0.00300 | 0.01500 |
-| `claude-haiku-3-5` | 0.00080 | 0.00400 |
-| `gemini-3.1-pro` | 0.00200 | 0.01200 |
-| `gemini-3-flash` | 0.00050 | 0.00300 |
-| `gemini-2.5-flash` | 0.00030 | 0.00250 |
-| `gemini-2.5-pro` | 0.00125 | 0.01000 |
-| `gemini-2.0-flash` | 0.00010 | 0.00040 |
-| `llama-4-scout` | 0.00011 | 0.00034 |
-| `llama-4-maverick` | 0.00020 | 0.00060 |
-| `llama-3.3-70b` | 0.00059 | 0.00079 |
-| `ollama/*` | 0.00000 | 0.00000 |
+`to_dict()` inclui `schema_version: 2`. Leitura é retrocompatível com v1.
 
-**Preços customizados:**
-
-```python
-tracer = Tracer(exporters=[...])
-from tracecast.core.cost_calculator import calculate_cost
-
-# Use custom_prices no calculate_cost
-cost = calculate_cost("meu-modelo", tokens_in=100, tokens_out=50,
-                      custom_prices={"meu-modelo": (0.001, 0.002)})
-```
-
----
-
-## Modelo de Dados
-
-### Trace (Nível Superior)
+### Trace
 | Campo | Tipo | Descrição |
 |-------|------|-----------|
-| `trace_id` | `str` | UUID único gerado para cada execução. |
-| `name` | `str` | Nome lógico da tarefa (ex: "pesquisa_web"). |
-| `user_id` | `str?` | ID do usuário final (útil para auditoria). |
-| `session_id` | `str?` | Identificador da conversa ou sessão. |
-| `project_id` | `str?` | Identificador do projeto no qual a IA está inserida. |
-| `model` | `str?` | O modelo que mais consumiu tokens neste trace. |
-| `total_tokens_in` | `int` | Soma de `tokens_in` de todos os spans LLM. |
-| `total_tokens_out` | `int` | Soma de `tokens_out` de todos os spans LLM. |
-| `total_tokens` | `int` | Soma total de tokens (in + out). |
-| `cost_usd` | `float` | Custo total estimado baseado na tabela built-in. |
-| `latency_ms` | `int?` | Tempo total decorrido (finished_at - started_at). |
-| `tools_used` | `dict` | Mapa `{"tool_name": count}` de todas as tools chamadas. |
-| `spans` | `list` | Lista de objetos Span. |
-| `metadata` | `dict` | Objeto livre para tags personalizadas. |
-| `started_at` | `ISO8601` | Timestamp de início (UTC). |
-| `finished_at` | `ISO8601` | Timestamp de conclusão (UTC). |
+| `trace_id` | `str` | UUID da execução. |
+| `name`, `user_id`, `session_id`, `project_id` | `str?` | Identificadores. |
+| `model` | `str?` | Modelo que mais consumiu tokens. |
+| `total_tokens_in/out/_in_cached/total_tokens` | `int` | Agregados dos spans. |
+| `cost_usd` | `float` | Custo total. |
+| `latency_ms` | `int?` | Wall-clock da request. |
+| `tools_used` | `dict` | `{tool: count}`. |
+| `spans` | `list[Span]` | Spans da request. |
+| `edges` | `list` | Arestas percorridas: `{from, to, parent_span_id, conditional}`. |
+| `metadata`, `started_at`, `finished_at` | | |
 
-### Span (Eventos Individuais)
+### Span
 | Campo | Tipo | Descrição |
 |-------|------|-----------|
-| `span_id` | `str` | UUID único do span. |
-| `type` | `Enum` | `LLM` (IA), `TOOL` (ferramenta), `AGENT` (passo intermediário). |
-| `name` | `str` | Nome descritivo (ex: "gpt-4o:summarize"). |
-| `model` | `str?` | Modelo específico usado neste span. |
-| `tokens_in` | `int?` | Tokens enviados ao modelo. |
-| `tokens_out` | `int?` | Tokens gerados pelo modelo. |
-| `cost_usd` | `float?` | Custo específico deste span. |
-| `latency_ms` | `int?` | Tempo de resposta deste span individual. |
-| `started_at` | `ISO8601` | Início do evento. |
-| `finished_at`| `ISO8601` | Fim do evento. |
-| `metadata` | `dict?` | Dados extras (ex: inputs da tool ou erros via `_error`). |
+| `span_id` | `str` | UUID. |
+| `parent_span_id` | `str?` | Pai na árvore (None = raiz). |
+| `type` | `Enum` | `LLM` / `TOOL` / `AGENT`. |
+| `name` | `str` | Nome descritivo. |
+| `status` | `Enum` | `ok` / `error`. |
+| `error` | `str?` | Mensagem quando `status == error`. |
+| `model`, `tokens_in/out/_in_cached`, `cost_usd`, `latency_ms` | | Métricas. |
+| `input`, `output`, `metadata` | | Conteúdo da etapa. |
+| `started_at`, `finished_at` | `ISO8601` | |
 
 ---
 
 ## Resiliência
 
 1. **Exceção no código do usuário** → trace sempre finalizado e exportado via `finally`.
-2. **Exceção no exporter** → engolida com `warning` — **nunca interrompe** o código principal.
-3. **`failOnExportError: true`** (TypeScript) → propaga erros do exporter se quiser controle explícito.
-4. **Traces aninhados** (Python) → suportados via stack de `ContextVar`.
-5. **Multi-tenant** → seguro — cada coroutine/thread tem seu próprio contexto isolado.
+2. **Exceção no exporter** → logada em nível `ERROR` e exposta via hook `on_export_error`; **nunca**
+   silenciosa e nunca interrompe o app. Outros exporters continuam.
+   ```python
+   Tracer(exporters=[...], on_export_error=lambda exc, trace, exp: alertar(exc))
+   ```
+3. **Export assíncrono não-bloqueante** — `aexport` roda fora do event loop (offload em thread).
+4. **Spans com erro** marcados com `status="error"` + `error` (first-class, não enterrado em metadata).
+5. **Multi-tenant / concorrência** — cada coroutine/thread isola seu próprio trace via `ContextVar`.
 
 ---
 
 ## Testes
 
 ```bash
-# Python
 cd packages/tracecast-py
-pip install -e ".[all]"
+pip install -e ".[all]" pytest
 python -m pytest tests/ -q
-# → 128 passed
-
-# TypeScript
-cd packages/tracecast-ts
-npm install
-npx jest --forceExit
-# → 113 passed
+# → 242 passed
 ```
 
 ---

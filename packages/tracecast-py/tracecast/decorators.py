@@ -1,10 +1,91 @@
 import asyncio
 import functools
+import uuid
+from datetime import datetime, timezone
 from typing import Callable, Optional, Any
-from .core.tracer import Tracer
+from .core.tracer import Tracer, activate_span
+from .models.span import Span, SpanType
 
 
 _default_tracer: Optional[Tracer] = None
+
+
+def _truncate(value: Any, limit: int = 2000) -> Optional[str]:
+    if value is None:
+        return None
+    text = value if isinstance(value, str) else repr(value)
+    return text if len(text) <= limit else text[:limit] + "..."
+
+
+def _new_span(name: str, span_type: SpanType, input_value: Any) -> Span:
+    return Span(
+        span_id=str(uuid.uuid4()),
+        parent_span_id=getattr(Tracer.current_span(), "span_id", None),
+        type=span_type,
+        name=name,
+        started_at=datetime.now(timezone.utc),
+        input=_truncate(input_value),
+    )
+
+
+def trace_span(
+    fn: Optional[Callable] = None,
+    *,
+    name: Optional[str] = None,
+    type: SpanType = SpanType.TOOL,
+    capture_io: bool = True,
+):
+    def decorator(inner_fn: Callable):
+        span_name = name or inner_fn.__name__
+
+        if asyncio.iscoroutinefunction(inner_fn):
+            @functools.wraps(inner_fn)
+            async def async_wrapper(*args: Any, **kwargs: Any):
+                trace = Tracer.current()
+                if trace is None:
+                    return await inner_fn(*args, **kwargs)
+                span = _new_span(span_name, type, (args, kwargs) if capture_io else None)
+                with activate_span(span):
+                    try:
+                        result = await inner_fn(*args, **kwargs)
+                    except Exception as exc:
+                        span.finished_at = datetime.now(timezone.utc)
+                        span.mark_error(exc)
+                        trace.spans.append(span)
+                        raise
+                span.finished_at = datetime.now(timezone.utc)
+                if capture_io:
+                    span.output = _truncate(result)
+                trace.spans.append(span)
+                return result
+
+            return async_wrapper
+
+        @functools.wraps(inner_fn)
+        def sync_wrapper(*args: Any, **kwargs: Any):
+            trace = Tracer.current()
+            if trace is None:
+                return inner_fn(*args, **kwargs)
+            span = _new_span(span_name, type, (args, kwargs) if capture_io else None)
+            with activate_span(span):
+                try:
+                    result = inner_fn(*args, **kwargs)
+                except Exception as exc:
+                    span.finished_at = datetime.now(timezone.utc)
+                    span.mark_error(exc)
+                    trace.spans.append(span)
+                    raise
+            span.finished_at = datetime.now(timezone.utc)
+            if capture_io:
+                span.output = _truncate(result)
+            trace.spans.append(span)
+            return result
+
+        return sync_wrapper
+
+    if fn is not None and callable(fn):
+        return decorator(fn)
+    return decorator
 
 
 def set_default_tracer(tracer: Tracer) -> None:

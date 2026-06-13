@@ -29,33 +29,10 @@ jobs:
         working-directory: packages/tracecast-py
         run: python -m pytest tests/ -v --tb=short
 
-  typescript:
-    name: TypeScript Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Install dependencies
-        working-directory: packages/tracecast-ts
-        run: npm ci --legacy-peer-deps
-
-      - name: Build
-        working-directory: packages/tracecast-ts
-        run: npx tsc
-
-      - name: Run tests
-        working-directory: packages/tracecast-ts
-        run: npx jest --verbose
-
   publish-pypi:
     name: Publish to PyPI
     runs-on: ubuntu-latest
-    needs: [python, typescript]
+    needs: [python]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     permissions:
       contents: write
@@ -83,7 +60,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add packages/tracecast-py/pyproject.toml packages/tracecast-ts/package.json
+          git add packages/tracecast-py/pyproject.toml
           git commit -m "chore: bump version to v$(cat .version)" || echo "No changes to commit"
           git push
 
@@ -99,42 +76,3 @@ jobs:
           password: ${{ secrets.PYPI_API_TOKEN }}
           packages-dir: packages/tracecast-py/dist/
           skip-existing: true
-
-  publish-npm:
-    name: Publish to NPM
-    runs-on: ubuntu-latest
-    needs: [python, typescript, publish-pypi]
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: main
-          persist-credentials: true
-          fetch-depth: 0
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          registry-url: "https://registry.npmjs.org"
-
-      - name: Install dependencies
-        working-directory: packages/tracecast-ts
-        run: npm ci --legacy-peer-deps
-
-      - name: Build
-        working-directory: packages/tracecast-ts
-        run: npx tsc
-
-      - name: Publish to NPM
-        working-directory: packages/tracecast-ts
-        run: |
-          CURRENT=$(node -p "require('./package.json').version")
-          PUBLISHED=$(npm view $(node -p "require('./package.json').name") version 2>/dev/null || echo "0.0.0")
-          if [ "$CURRENT" = "$PUBLISHED" ]; then
-            echo "Version $CURRENT already published, skipping."
-          else
-            npm publish --access public
-          fi
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -121,6 +121,6 @@ class TestGeminiInstrumentor:
         trace = exporter.traces[0]
         assert len(trace["spans"]) == 1
         span = trace["spans"][0]
-        assert "_error" in span["metadata"]
-        assert span["metadata"]["_error"] == "gemini api error"
+        assert span["status"] == "error"
+        assert span["error"] == "gemini api error"
         inst.unpatch()

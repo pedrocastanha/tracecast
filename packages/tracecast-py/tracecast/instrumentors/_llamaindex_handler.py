@@ -74,6 +74,7 @@ class TraceCastSpanHandler:
         instance_name = type(instance).__name__ if instance is not None else "span"
         span = Span(
             span_id=str(uuid.uuid4()),
+            parent_span_id=getattr(Tracer.current_span(), "span_id", None),
             type=SpanType.LLM,
             name=f"llamaindex:{instance_name}",
             started_at=datetime.now(timezone.utc),
@@ -124,7 +125,7 @@ class TraceCastSpanHandler:
         span, trace = entry
         span.finished_at = datetime.now(timezone.utc)
         if err is not None:
-            span.metadata["_error"] = str(err)
+            span.mark_error(err)
         trace.spans.append(span)
 
 
@@ -190,6 +191,7 @@ def _build_handler_class():
             instance_name = type(instance).__name__ if instance is not None else "span"
             span = Span(
                 span_id=id_ or str(uuid.uuid4()),
+                parent_span_id=getattr(Tracer.current_span(), "span_id", None),
                 type=SpanType.LLM,
                 name=f"llamaindex:{instance_name}",
                 started_at=datetime.now(timezone.utc),
@@ -240,7 +242,7 @@ def _build_handler_class():
 
             span, trace = entry
             span.finished_at = datetime.now(timezone.utc)
-            span.metadata["_error"] = str(err) if err else "dropped"
+            span.mark_error(err if err else "dropped")
             trace.spans.append(span)
             return None
 

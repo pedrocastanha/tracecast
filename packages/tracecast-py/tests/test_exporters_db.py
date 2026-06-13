@@ -37,17 +37,24 @@ class TestMongoExporter:
                 db="tracecast_test",
                 collection="traces",
             )
+            exporter._collection = mock_col
             exporter.col = mock_col
         return exporter, mock_col
 
-    def test_export_chama_insert_one(self):
+    @staticmethod
+    def _replaced_doc(mock_col):
+        return mock_col.replace_one.call_args[0][1]
+
+    def test_export_faz_upsert(self):
         exporter, mock_col = self._make_exporter()
         trace = make_trace(user_id="u1")
 
         exporter.export(trace)
 
-        mock_col.insert_one.assert_called_once()
-        doc = mock_col.insert_one.call_args[0][0]
+        mock_col.replace_one.assert_called_once()
+        assert mock_col.replace_one.call_args[0][0] == {"trace_id": trace.trace_id}
+        assert mock_col.replace_one.call_args.kwargs.get("upsert") is True
+        doc = self._replaced_doc(mock_col)
         assert doc["trace_id"] == trace.trace_id
         assert doc["user_id"] == "u1"
         assert "exported_at" in doc
@@ -56,7 +63,7 @@ class TestMongoExporter:
         exporter, mock_col = self._make_exporter()
         trace = make_trace()
         exporter.export(trace)
-        doc = mock_col.insert_one.call_args[0][0]
+        doc = self._replaced_doc(mock_col)
         assert isinstance(doc["exported_at"], datetime)
 
     def test_export_inclui_spans(self):
@@ -79,10 +86,29 @@ class TestMongoExporter:
         trace._finalize()
 
         exporter.export(trace)
-        doc = mock_col.insert_one.call_args[0][0]
+        doc = self._replaced_doc(mock_col)
         assert len(doc["spans"]) == 1
         assert doc["spans"][0]["model"] == "gpt-4o"
         assert doc["total_tokens"] == 150
+
+    def test_query_get_count_pushdown(self):
+        exporter, mock_col = self._make_exporter()
+        cursor = MagicMock()
+        cursor.sort.return_value = cursor
+        cursor.skip.return_value = cursor
+        cursor.limit.return_value = [{"trace_id": "x"}]
+        mock_col.find.return_value = cursor
+        mock_col.count_documents.return_value = 7
+        mock_col.find_one.return_value = {"trace_id": "x"}
+
+        rows = exporter.query(project_id="p1", limit=10, offset=20, sort_by="cost", order="asc")
+        assert rows == [{"trace_id": "x"}]
+        assert mock_col.find.call_args[0][0]["project_id"] == "p1"
+        cursor.skip.assert_called_with(20)
+        cursor.limit.assert_called_with(10)
+
+        assert exporter.count(project_id="p1") == 7
+        assert exporter.get("x") == {"trace_id": "x"}
 
     def test_integra_com_tracer(self):
         mock_col = MagicMock()
@@ -93,6 +119,7 @@ class TestMongoExporter:
 
             from tracecast.exporters.mongo import MongoExporter
             exporter = MongoExporter("mongodb://localhost:27017")
+            exporter._collection = mock_col
             exporter.col = mock_col
 
             tracer = Tracer(exporters=[exporter])
@@ -111,8 +138,8 @@ class TestMongoExporter:
                 span.cost_usd = 0.003
                 trace.spans.append(span)
 
-        mock_col.insert_one.assert_called_once()
-        doc = mock_col.insert_one.call_args[0][0]
+        mock_col.replace_one.assert_called_once()
+        doc = mock_col.replace_one.call_args[0][1]
         assert doc["project_id"] == "proj-1"
         assert doc["model"] == "claude-sonnet-4-6"
         assert doc["total_tokens"] == 300

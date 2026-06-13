@@ -23,6 +23,9 @@ classifiers = [
 ]
 dependencies = []
 
+[project.scripts]
+tracecast-server = "tracecast.serve:main"
+
 [project.urls]
 Homepage = "https://github.com/pedrocastanha/tracecast"
 Repository = "https://github.com/pedrocastanha/tracecast"

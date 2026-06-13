@@ -24,6 +24,7 @@ def trace_llm_call(
 
     span = Span(
         span_id=str(uuid.uuid4()),
+        parent_span_id=getattr(Tracer.current_span(), "span_id", None),
         type=SpanType.LLM,
         name=f"llm:{model}",
         model=model,
@@ -46,7 +47,7 @@ def trace_llm_call(
         if logger:
             logger.llm_error(trace.name, model=model, error=error)
         span.finished_at = datetime.now(timezone.utc)
-        span.metadata["_error"] = error
+        span.mark_error(exc)
         trace.spans.append(span)
         raise
 

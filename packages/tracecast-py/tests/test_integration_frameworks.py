@@ -341,7 +341,7 @@ class TestLangChain:
         assert len(exporter.records) == 1
         exported = exporter.records[0]
         assert exported.finished_at is not None
-        error_spans = [s for s in exported.spans if s.metadata.get("_error")]
+        error_spans = [s for s in exported.spans if s.error]
         assert len(error_spans) >= 1
 
 
