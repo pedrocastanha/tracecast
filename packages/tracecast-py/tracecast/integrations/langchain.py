@@ -40,9 +40,62 @@ class TraceCastCallback(BaseCallbackHandler):
             name=f"llm:{model}",
             model=model,
             started_at=datetime.now(timezone.utc),
+            input=self._join_prompts(prompts),
         )
         if self._logger:
             self._logger.llm_start(self._trace_name(), model=model)
+
+    def on_chat_model_start(self, serialized, messages, **kwargs):
+        run_id = str(kwargs.get("run_id", uuid.uuid4()))
+        model = (
+            serialized.get("kwargs", {}).get("model_name")
+            or serialized.get("kwargs", {}).get("model")
+            or serialized.get("name", "unknown")
+        )
+        self._span_stack[run_id] = Span(
+            span_id=run_id,
+            type=SpanType.LLM,
+            name=f"llm:{model}",
+            model=model,
+            started_at=datetime.now(timezone.utc),
+            input=self._join_messages(messages),
+        )
+        if self._logger:
+            self._logger.llm_start(self._trace_name(), model=model)
+
+    @staticmethod
+    def _join_prompts(prompts) -> Optional[str]:
+        try:
+            if not prompts:
+                return None
+            return "\n\n".join(str(p) for p in prompts)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _join_messages(messages) -> Optional[str]:
+        try:
+            parts = []
+            for group in messages or []:
+                for m in group:
+                    role = getattr(m, "type", None) or m.__class__.__name__
+                    content = getattr(m, "content", "")
+                    parts.append(f"[{role}] {content}")
+            return "\n".join(parts) if parts else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _extract_output(response) -> Optional[str]:
+        try:
+            gen = response.generations[0][0]
+            msg = getattr(gen, "message", None)
+            if msg is not None and getattr(msg, "content", None):
+                return str(msg.content)
+            text = getattr(gen, "text", None)
+            return str(text) if text else None
+        except (IndexError, AttributeError):
+            return None
 
     def on_llm_end(self, response, **kwargs):
         run_id = str(kwargs.get("run_id", ""))
@@ -50,6 +103,7 @@ class TraceCastCallback(BaseCallbackHandler):
         if not span:
             return
         span.finished_at = datetime.now(timezone.utc)
+        span.output = self._extract_output(response)
         usage = _from_langchain_response(response.llm_output or {})
         if usage["input"] == 0 and usage["output"] == 0:
             try:
