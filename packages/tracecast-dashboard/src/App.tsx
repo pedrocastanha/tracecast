@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { MOUNT_PREFIX } from "./base";
 import { Layout } from "./components/Layout";
 import { Overview } from "./pages/Overview";
 import { Traces } from "./pages/Traces";
@@ -9,7 +10,7 @@ import { TraceDetail } from "./pages/TraceDetail";
 
 export function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={MOUNT_PREFIX || "/"}>
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<Overview />} />
