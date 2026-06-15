@@ -24,6 +24,7 @@ class MongoExporter(BaseExporter):
         exclude_fields: Optional[Iterable[str]] = None,
     ):
         self.col = MongoClient(uri)[db][collection]
+        self._collection = self.col
         self._include: Optional[Set[str]] = set(include_fields) if include_fields is not None else None
         self._exclude: Optional[Set[str]] = set(exclude_fields) if exclude_fields is not None else None
 
