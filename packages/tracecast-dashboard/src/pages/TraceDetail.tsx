@@ -20,30 +20,34 @@ export function TraceDetail() {
 
   const selectedSpan = t.spans?.find((s: AnyObj) => s.span_id === selected) ?? null;
 
-  const tabBtn = (key: "graph" | "list", label: string) => (
-    <button
-      onClick={() => setTab(key)}
-      style={{
-        padding: "6px 14px",
-        border: "1px solid var(--border)",
-        background: tab === key ? "var(--accent)" : "var(--surface)",
-        color: tab === key ? "#fff" : "var(--text)",
-        borderRadius: 6,
-        cursor: "pointer",
-        marginRight: 8,
-      }}
-    >
-      {label}
-    </button>
-  );
+  const tabBtn = (key: "graph" | "list", label: string) => {
+    const active = tab === key;
+    return (
+      <button
+        onClick={() => setTab(key)}
+        style={{
+          padding: "7px 16px",
+          border: `1px solid ${active ? "var(--accent)" : "var(--border)"}`,
+          background: active ? "var(--accent-dim)" : "var(--surface-2)",
+          color: active ? "var(--accent)" : "var(--text-muted)",
+          fontWeight: active ? 600 : 500,
+          borderRadius: "var(--radius-sm)",
+          cursor: "pointer",
+          marginRight: 8,
+        }}
+      >
+        {label}
+      </button>
+    );
+  };
 
   return (
     <div>
       <button onClick={() => navigate(-1)}
-        style={{ marginBottom: 16, padding: "6px 14px", border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", borderRadius: 6, cursor: "pointer" }}>
+        style={{ marginBottom: 18, padding: "7px 14px", border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-muted)", borderRadius: "var(--radius-sm)", cursor: "pointer" }}>
         &larr; Back
       </button>
-      <h2 style={{ fontSize: 18, fontWeight: 600 }}>{t.name}</h2>
+      <h2 style={{ fontSize: 24, fontWeight: 700, letterSpacing: "-0.025em" }}>{t.name}</h2>
       <p style={{ color: "var(--text-muted)", fontSize: 13, marginTop: 4 }}>
         Trace ID: <code>{t.trace_id}</code>
       </p>

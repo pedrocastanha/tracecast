@@ -1,21 +1,189 @@
+/* ============================================================
+   TraceCast Dashboard — visual system
+   Aesthetic: "telemetry / instrument panel"
+   Near-black canvas, signal-lime accent, dotted-grid atmosphere.
+   Display/UI:  Hanken Grotesk   ·   Data/IDs: IBM Plex Mono
+   Most components style via these CSS vars, so the palette
+   propagates everywhere by keeping the original var names.
+   ============================================================ */
+
+@import url("https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap");
+
 :root {
-  --bg: #0f1117;
-  --surface: #1a1d27;
-  --border: #2a2d37;
-  --text: #e1e4ed;
-  --text-muted: #8b8fa6;
-  --accent: #6366f1;
-  --accent-hover: #818cf8;
-  --green: #22c55e;
-  --red: #ef4444;
-  --yellow: #f59e0b;
+  /* surfaces */
+  --bg: #0a0c11;
+  --bg-2: #0d1016;
+  --surface: #13161e;
+  --surface-2: #181c25;
+  --surface-3: #1f2430;
+  --border: #222734;
+  --border-strong: #2d3340;
+
+  /* text */
+  --text: #e7eaf2;
+  --text-muted: #868da0;
+  --text-faint: #565d70;
+
+  /* signal-lime accent (replaces the generic indigo) */
+  --accent: #c8f751;
+  --accent-hover: #d9ff6e;
+  --accent-dim: rgba(200, 247, 81, 0.1);
+  --accent-glow: rgba(200, 247, 81, 0.25);
+
+  /* status / data hues */
+  --green: #56e29a;
+  --red: #fb7185;
+  --yellow: #fbbf24;
+  --cyan: #5eead4;
+  --violet: #a78bfa;
+
+  --radius: 10px;
+  --radius-sm: 7px;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --ui: "Hanken Grotesk", system-ui, sans-serif;
 }
-* { margin: 0; padding: 0; box-sizing: border-box; }
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  background: var(--bg);
+  font-family: var(--ui);
+  background-color: var(--bg);
+  /* Layered atmosphere: a faint lime glow bleeding from the top-left,
+     a cool counter-glow bottom-right, over a fine dotted grid. */
+  background-image:
+    radial-gradient(900px 500px at 0% -5%, rgba(200, 247, 81, 0.06), transparent 60%),
+    radial-gradient(800px 600px at 100% 110%, rgba(94, 234, 212, 0.045), transparent 55%),
+    radial-gradient(var(--border) 1px, transparent 1px);
+  background-size: 100% 100%, 100% 100%, 22px 22px;
+  background-attachment: fixed;
   color: var(--text);
   min-height: 100vh;
+  letter-spacing: -0.01em;
 }
-a { color: var(--accent); text-decoration: none; }
-a:hover { color: var(--accent-hover); }
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+a:hover {
+  color: var(--accent-hover);
+}
+
+/* Monospace for every machine-ish value: ids, tokens, costs, code, pre */
+code,
+pre,
+kbd {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Form controls inherit the theme instead of OS defaults */
+select,
+input,
+button,
+textarea {
+  font-family: var(--ui);
+  font-size: 13px;
+  color: var(--text);
+  outline: none;
+}
+input::placeholder {
+  color: var(--text-faint);
+}
+select:focus-visible,
+input:focus-visible,
+button:focus-visible,
+textarea:focus-visible {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+select {
+  appearance: none;
+  cursor: pointer;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
+    linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
+  background-position: calc(100% - 16px) center, calc(100% - 11px) center;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 30px !important;
+}
+button {
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.05s ease;
+}
+button:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+/* Tables read as dense instrument readouts */
+th {
+  font-size: 10.5px !important;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  font-weight: 600 !important;
+  color: var(--text-faint) !important;
+}
+tbody tr {
+  transition: background 0.12s ease;
+}
+td code {
+  font-size: 12px;
+  color: var(--accent);
+  background: var(--accent-dim);
+  padding: 2px 7px;
+  border-radius: 5px;
+}
+
+/* Slim custom scrollbars */
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--surface-3);
+  border-radius: 5px;
+  border: 2px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
+}
+
+::selection {
+  background: var(--accent-glow);
+  color: #fff;
+}
+
+/* Page-load reveal — applied to the routed page via .page-enter */
+@keyframes tc-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.page-enter {
+  animation: tc-rise 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
