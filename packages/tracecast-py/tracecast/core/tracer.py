@@ -49,13 +49,14 @@ class Tracer:
             self._tc_logger = TraceCastLogger(prefix=log_prefix)
 
     @contextmanager
-    def trace(self, name: str, session_id=None, user_id=None, project_id=None, metadata=None):
+    def trace(self, name: str, session_id=None, user_id=None, project_id=None, project_name=None, metadata=None):
         t = Trace(
             trace_id=str(uuid.uuid4()),
             name=name,
             session_id=session_id,
             user_id=user_id,
             project_id=project_id,
+            project_name=project_name,
             started_at=datetime.now(timezone.utc),
             metadata=metadata or {},
         )
@@ -79,13 +80,14 @@ class Tracer:
             self._export(t)
 
     @asynccontextmanager
-    async def atrace(self, name: str, session_id=None, user_id=None, project_id=None, metadata=None):
+    async def atrace(self, name: str, session_id=None, user_id=None, project_id=None, project_name=None, metadata=None):
         t = Trace(
             trace_id=str(uuid.uuid4()),
             name=name,
             session_id=session_id,
             user_id=user_id,
             project_id=project_id,
+            project_name=project_name,
             started_at=datetime.now(timezone.utc),
             metadata=metadata or {},
         )

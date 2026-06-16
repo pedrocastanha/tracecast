@@ -15,6 +15,7 @@ class Trace:
     session_id: Optional[str] = None
     user_id: Optional[str] = None
     project_id: Optional[str] = None
+    project_name: Optional[str] = None
     model: Optional[str] = None
     total_tokens_in: int = 0
     total_tokens_out: int = 0
@@ -76,6 +77,7 @@ class Trace:
             "session_id":       self.session_id,
             "user_id":          self.user_id,
             "project_id":       self.project_id,
+            "project_name":     self.project_name,
             "model":            self.model,
             "total_tokens_in":        self.total_tokens_in,
             "total_tokens_out":       self.total_tokens_out,

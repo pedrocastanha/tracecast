@@ -124,23 +124,46 @@ function layout(nodes: GraphNode[], layoutEdges: Array<[string, string]>): Recor
   return pos;
 }
 
+// LangChain internal chain names filtered out in simplified mode
+const INTERNAL_CHAIN_NAMES = new Set([
+  "LangGraph", "RunnableSequence", "Prompt", "ChatPromptTemplate",
+  "call_model", "should_continue", "agent",
+]);
+
+function simplifyNodes(nodes: GraphNode[]): GraphNode[] {
+  return nodes.filter((n) => {
+    if (n.type === "llm" || n.type === "tool") return false;
+    const shortName = n.name.split(":").pop() ?? n.name;
+    return !INTERNAL_CHAIN_NAMES.has(shortName);
+  });
+}
+
+function simplifyEdges(edges: GraphEdge[], visibleIds: Set<string>): GraphEdge[] {
+  return edges.filter((e) => visibleIds.has(e.from) && visibleIds.has(e.to));
+}
+
 export function TraceGraph({ data, onSelect }: { data: GraphData; onSelect: (id: string) => void }) {
   const [selected, setSelected] = useState<string | null>(null);
+  const [simplified, setSimplified] = useState(false);
 
   const { nodes, edges } = useMemo(() => {
+    const activeNodes = simplified ? simplifyNodes(data.nodes) : data.nodes;
+    const visibleIds  = new Set(activeNodes.map((n) => n.id));
+    const activeEdges = simplified ? simplifyEdges(data.edges, visibleIds) : data.edges;
+
     // Traversal flow comes from data.edges; nesting from parent_span_id.
-    const traversalKeys = new Set(data.edges.map((e) => `${e.from}->${e.to}`));
-    const parentEdges: Array<[string, string]> = data.nodes
-      .filter((n) => n.parent_span_id && !traversalKeys.has(`${n.parent_span_id}->${n.id}`))
+    const traversalKeys = new Set(activeEdges.map((e) => `${e.from}->${e.to}`));
+    const parentEdges: Array<[string, string]> = activeNodes
+      .filter((n) => n.parent_span_id && visibleIds.has(n.parent_span_id) && !traversalKeys.has(`${n.parent_span_id}->${n.id}`))
       .map((n) => [n.parent_span_id as string, n.id]);
 
     const layoutEdges: Array<[string, string]> = [
-      ...data.edges.map((e) => [e.from, e.to] as [string, string]),
+      ...activeEdges.map((e) => [e.from, e.to] as [string, string]),
       ...parentEdges,
     ];
-    const pos = layout(data.nodes, layoutEdges);
+    const pos = layout(activeNodes, layoutEdges);
 
-    const rfNodes: Node[] = data.nodes.map((n) => {
+    const rfNodes: Node[] = activeNodes.map((n) => {
       const color = colorFor(n);
       const metaParts = [
         n.total_tokens ? `${n.total_tokens.toLocaleString()} tok` : null,
@@ -157,7 +180,7 @@ export function TraceGraph({ data, onSelect }: { data: GraphData; onSelect: (id:
     });
 
     // Traversal edges: solid lime arrows (animated when conditional).
-    const flowEdges: Edge[] = data.edges.map((e, i) => ({
+    const flowEdges: Edge[] = activeEdges.map((e, i) => ({
       id: `t${i}`,
       source: e.from,
       target: e.to,
@@ -178,7 +201,7 @@ export function TraceGraph({ data, onSelect }: { data: GraphData; onSelect: (id:
     }));
 
     return { nodes: rfNodes, edges: [...nestEdges, ...flowEdges] };
-  }, [data, selected]);
+  }, [data, selected, simplified]);
 
   return (
     <div style={{ height: 560, border: "1px solid var(--border)", borderRadius: "var(--radius)", background: "var(--bg-2)", overflow: "hidden" }}>
@@ -198,6 +221,22 @@ export function TraceGraph({ data, onSelect }: { data: GraphData; onSelect: (id:
       >
         <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#222734" />
         <Controls showInteractive={false} style={{ borderRadius: 8, overflow: "hidden", border: "1px solid var(--border)" }} />
+        {/* Simplified toggle */}
+        <button
+          onClick={() => setSimplified((v) => !v)}
+          style={{
+            position: "absolute", left: 12, top: 12, zIndex: 5,
+            padding: "5px 12px", borderRadius: 20,
+            border: `1px solid ${simplified ? "var(--accent)" : "var(--border)"}`,
+            background: simplified ? "rgba(200,247,81,.12)" : "rgba(19,22,30,.85)",
+            color: simplified ? "var(--accent)" : "var(--text-muted)",
+            fontFamily: "var(--mono)", fontSize: 10.5, cursor: "pointer",
+            backdropFilter: "blur(4px)", transition: "all .15s ease",
+          }}
+        >
+          {simplified ? "simplified" : "full"} view
+        </button>
+
         {/* Legend */}
         <div style={{ position: "absolute", right: 12, top: 12, zIndex: 5, display: "flex", gap: 14, padding: "8px 12px", background: "rgba(19,22,30,.85)", border: "1px solid var(--border)", borderRadius: 8, fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--text-muted)", backdropFilter: "blur(4px)" }}>
           {[["llm", "#c8f751"], ["tool", "#fbbf24"], ["agent", "#a78bfa"], ["error", "#fb7185"]].map(([label, c]) => (

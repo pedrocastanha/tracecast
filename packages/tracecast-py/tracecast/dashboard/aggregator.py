@@ -50,6 +50,7 @@ def compute_metrics(
             cost_by_project[t.project_id] += t.cost_usd
 
     traces_over_time = _group_by_day(filtered)
+    tokens_by_model_over_time = _group_by_day_and_model(filtered)
 
     return {
         "period": period,
@@ -63,6 +64,7 @@ def compute_metrics(
         "cost_by_model": dict(cost_by_model),
         "cost_by_project": dict(cost_by_project),
         "traces_over_time": traces_over_time,
+        "tokens_by_model_over_time": tokens_by_model_over_time,
     }
 
 
@@ -116,6 +118,7 @@ def _trace_summary(trace: Trace) -> dict:
         "trace_id": trace.trace_id,
         "name": trace.name,
         "project_id": trace.project_id,
+        "project_name": trace.project_name,
         "user_id": trace.user_id,
         "session_id": trace.session_id,
         "model": trace.model,
@@ -157,16 +160,33 @@ def build_graph(trace: Trace) -> dict:
     }
 
 
-def compute_sessions(traces: List[Trace]) -> list:
-    """Aggregate traces by session_id. Traces without session_id are skipped."""
+def compute_sessions(
+    traces: List[Trace],
+    *,
+    project_name: Optional[str] = None,
+    project_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> list:
+    """Aggregate traces by session_id with optional hierarchical filtering."""
+    filtered = traces
+    if project_name:
+        filtered = [t for t in filtered if t.project_name == project_name]
+    if project_id:
+        filtered = [t for t in filtered if t.project_id == project_id]
+    if user_id:
+        filtered = [t for t in filtered if t.user_id == user_id]
+
     groups: dict[str, dict] = {}
-    for t in traces:
+    for t in filtered:
         sid = t.session_id
         if not sid:
             continue
         if sid not in groups:
             groups[sid] = {
                 "session_id": sid,
+                "project_name": t.project_name,
+                "project_id": t.project_id,
+                "user_id": t.user_id,
                 "trace_count": 0,
                 "total_cost_usd": 0.0,
                 "total_tokens": 0,
@@ -195,7 +215,45 @@ def compute_sessions(traces: List[Trace]) -> list:
 
 
 def compute_projects(traces: List[Trace]) -> list:
-    """Aggregate traces by project_id. Traces without project_id are skipped."""
+    """Group by project_name if available; fall back to project_id."""
+    use_name = any(t.project_name for t in traces)
+    groups: dict[str, dict] = {}
+    for t in traces:
+        key = t.project_name if use_name else t.project_id
+        if not key:
+            continue
+        if key not in groups:
+            groups[key] = {
+                "project_name" if use_name else "project_id": key,
+                "trace_count": 0,
+                "total_cost_usd": 0.0,
+                "total_tokens": 0,
+                "total_tokens_in": 0,
+                "total_tokens_out": 0,
+                "_first_dt": t.started_at,
+                "_last_dt": t.started_at,
+            }
+        g = groups[key]
+        g["trace_count"] += 1
+        g["total_cost_usd"] += t.cost_usd
+        g["total_tokens"] += t.total_tokens
+        g["total_tokens_in"] += t.total_tokens_in
+        g["total_tokens_out"] += t.total_tokens_out
+        dt = t.started_at
+        if dt < g["_first_dt"]:
+            g["_first_dt"] = dt
+        if dt > g["_last_dt"]:
+            g["_last_dt"] = dt
+    result = sorted(groups.values(), key=lambda x: x["_last_dt"], reverse=True)
+    for r in result:
+        r["total_cost_usd"] = round(r["total_cost_usd"], 6)
+        r["first_trace_at"] = r.pop("_first_dt").isoformat()
+        r["last_trace_at"] = r.pop("_last_dt").isoformat()
+    return result
+
+
+def compute_projects_by_id(traces: List[Trace]) -> list:
+    """Aggregate traces by project_id (filial level, used for drill-down under a project_name)."""
     groups: dict[str, dict] = {}
     for t in traces:
         pid = t.project_id
@@ -231,6 +289,23 @@ def compute_projects(traces: List[Trace]) -> list:
     return result
 
 
+def compute_filter_options(traces: List[Trace]) -> dict:
+    """Return available values for cascading filter dropdowns: project_name → project_id → user_id."""
+    project_names = sorted({t.project_name for t in traces if t.project_name})
+    by_name: dict[str, set] = defaultdict(set)
+    by_pid: dict[str, set] = defaultdict(set)
+    for t in traces:
+        if t.project_name and t.project_id:
+            by_name[t.project_name].add(t.project_id)
+        if t.project_id and t.user_id:
+            by_pid[t.project_id].add(t.user_id)
+    return {
+        "project_names": project_names,
+        "project_ids": {k: sorted(v) for k, v in by_name.items()},
+        "user_ids": {k: sorted(v) for k, v in by_pid.items()},
+    }
+
+
 def _period_delta(period: str) -> timedelta:
     mapping = {
         "1h": timedelta(hours=1),
@@ -249,3 +324,18 @@ def _group_by_day(traces: List[Trace]) -> list:
         groups[day]["traces"] += 1
         groups[day]["cost_usd"] += t.cost_usd
     return sorted(groups.values(), key=lambda x: x["date"])
+
+
+def _group_by_day_and_model(traces: List[Trace]) -> list:
+    """Group by (date, model) for multi-series token/cost chart."""
+    groups: dict[tuple, dict] = {}
+    for t in traces:
+        day = t.started_at.strftime("%Y-%m-%d")
+        model = t.model or "unknown"
+        key = (day, model)
+        if key not in groups:
+            groups[key] = {"date": day, "model": model, "tokens_in": 0, "tokens_out": 0, "cost_usd": 0.0}
+        groups[key]["tokens_in"] += t.total_tokens_in
+        groups[key]["tokens_out"] += t.total_tokens_out
+        groups[key]["cost_usd"] = round(groups[key]["cost_usd"] + t.cost_usd, 6)
+    return sorted(groups.values(), key=lambda x: (x["date"], x["model"]))

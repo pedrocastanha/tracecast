@@ -80,9 +80,19 @@ class TraceReader:
                 return t
         return None
 
-    def get_sessions(self) -> list:
+    def get_sessions(
+        self,
+        project_name: Optional[str] = None,
+        project_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> list:
         from .aggregator import compute_sessions
-        return compute_sessions(self.get_traces())
+        return compute_sessions(
+            self.get_traces(),
+            project_name=project_name,
+            project_id=project_id,
+            user_id=user_id,
+        )
 
     def get_session(self, session_id: str) -> List[Trace]:
         return [t for t in self.get_traces() if t.session_id == session_id]
@@ -91,8 +101,17 @@ class TraceReader:
         from .aggregator import compute_projects
         return compute_projects(self.get_traces())
 
+    def get_subprojects(self, project_name: str) -> list:
+        from .aggregator import compute_projects_by_id
+        traces = [t for t in self.get_traces() if t.project_name == project_name]
+        return compute_projects_by_id(traces)
+
     def get_project(self, project_id: str) -> List[Trace]:
         return [t for t in self.get_traces() if t.project_id == project_id]
+
+    def get_filter_options(self) -> dict:
+        from .aggregator import compute_filter_options
+        return compute_filter_options(self.get_traces())
 
     def _read_from(self, exporter) -> List[Trace]:
         name = type(exporter).__name__
@@ -193,6 +212,7 @@ def _hydrate_trace(d: dict) -> Trace:
         session_id=d.get("session_id", d.get("sessionId")),
         user_id=d.get("user_id", d.get("userId")),
         project_id=d.get("project_id", d.get("projectId")),
+        project_name=d.get("project_name", d.get("projectName")),
         model=d.get("model"),
         total_tokens_in=d.get("total_tokens_in", d.get("totalTokensIn", 0)),
         total_tokens_out=d.get("total_tokens_out", d.get("totalTokensOut", 0)),

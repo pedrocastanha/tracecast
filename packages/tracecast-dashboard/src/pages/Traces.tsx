@@ -30,12 +30,16 @@ export function Traces() {
   const [order, setOrder] = useState("desc");
   const [projectId, setProjectId] = useState("");
   const [userId, setUserId] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
 
   const params = `?page=${page}&page_size=50&sort_by=${sortBy}&order=${order}` +
     (projectId ? `&project_id=${encodeURIComponent(projectId)}` : "") +
-    (userId ? `&user_id=${encodeURIComponent(userId)}` : "");
+    (userId ? `&user_id=${encodeURIComponent(userId)}` : "") +
+    (fromDate ? `&from=${encodeURIComponent(fromDate + "T00:00:00")}` : "") +
+    (toDate   ? `&to=${encodeURIComponent(toDate + "T23:59:59")}` : "");
 
-  const { data, loading } = useApi<{ traces: TraceSummary[]; total: number; page: number }>(`/traces${params}`, [page, sortBy, order, projectId, userId]);
+  const { data, loading } = useApi<{ traces: TraceSummary[]; total: number; page: number }>(`/traces${params}`, [page, sortBy, order, projectId, userId, fromDate, toDate]);
 
   const toggleSort = (col: string) => {
     if (sortBy === col) setOrder(order === "desc" ? "asc" : "desc");
@@ -52,6 +56,32 @@ export function Traces() {
       <div style={{ display: "flex", gap: 8, marginBottom: 18, alignItems: "center", flexWrap: "wrap" }}>
         <input placeholder="Project ID" value={projectId} onChange={(e) => { setProjectId(e.target.value); setPage(1); }} style={inputStyle} />
         <input placeholder="User ID" value={userId} onChange={(e) => { setUserId(e.target.value); setPage(1); }} style={inputStyle} />
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--text-faint)" }}>from</span>
+          <input
+            type="date"
+            value={fromDate}
+            onChange={(e) => { setFromDate(e.target.value); setPage(1); }}
+            style={inputStyle}
+          />
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--text-faint)" }}>to</span>
+          <input
+            type="date"
+            value={toDate}
+            onChange={(e) => { setToDate(e.target.value); setPage(1); }}
+            style={inputStyle}
+          />
+        </div>
+        {(fromDate || toDate) && (
+          <button
+            onClick={() => { setFromDate(""); setToDate(""); setPage(1); }}
+            style={{ padding: "8px 12px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-faint)", borderRadius: "var(--radius-sm)", cursor: "pointer", fontFamily: "var(--mono)", fontSize: 12 }}
+          >
+            clear dates
+          </button>
+        )}
       </div>
 
       {loading ? <div style={{ color: "var(--text-muted)" }}>Loading…</div> : (

@@ -12,7 +12,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional
 from .reader import TraceReader
-from .aggregator import compute_metrics, paginate_traces, _trace_summary, build_graph
+from .aggregator import compute_metrics, paginate_traces, _trace_summary, build_graph, compute_filter_options
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -142,9 +142,21 @@ def _make_router(reader: TraceReader, prefix: str = "") -> "APIRouter":
     def dashboard_index():
         return HTMLResponse(content=_index_html(prefix))
 
+    @router.get("/api/filter-options")
+    def api_filter_options():
+        return reader.get_filter_options()
+
     @router.get("/api/sessions")
-    def api_sessions():
-        sessions = reader.get_sessions()
+    def api_sessions(
+        project_name: Optional[str] = Query(None),
+        project_id: Optional[str] = Query(None),
+        user_id: Optional[str] = Query(None),
+    ):
+        sessions = reader.get_sessions(
+            project_name=project_name,
+            project_id=project_id,
+            user_id=user_id,
+        )
         return {"sessions": sessions, "total": len(sessions)}
 
     @router.get("/api/sessions/{session_id}")
@@ -163,6 +175,11 @@ def _make_router(reader: TraceReader, prefix: str = "") -> "APIRouter":
     def api_projects():
         projects = reader.get_projects()
         return {"projects": projects, "total": len(projects)}
+
+    @router.get("/api/projects/{project_name}/sub-projects")
+    def api_project_subprojects(project_name: str):
+        sub = reader.get_subprojects(project_name)
+        return {"project_name": project_name, "sub_projects": sub, "total": len(sub)}
 
     @router.get("/api/projects/{project_id}")
     def api_project_detail(project_id: str):
