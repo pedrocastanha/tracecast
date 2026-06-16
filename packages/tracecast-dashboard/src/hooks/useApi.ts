@@ -1,12 +1,5 @@
 import { useState, useEffect } from "react";
-
-declare global {
-  interface Window {
-    __TC_PREFIX__?: string;
-  }
-}
-
-const BASE = `${(typeof window !== "undefined" && window.__TC_PREFIX__) || ""}/api`;
+import { API_BASE as BASE } from "../base";
 
 export function useApi<T>(path: string, deps: unknown[] = []): { data: T | null; loading: boolean; error: string | null } {
   const [data, setData] = useState<T | null>(null);

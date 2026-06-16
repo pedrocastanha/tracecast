@@ -1,7 +1,25 @@
+import sys
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 from .base import BaseInstrumentor, active_parent_id
+
+
+def _handled_by_langchain() -> bool:
+    from ..instrument import _registry
+
+    inst = _registry.get("langchain")
+    if inst is None or not inst.is_patched():
+        return False
+    frame = sys._getframe(2)
+    depth = 0
+    while frame is not None and depth < 60:
+        module = frame.f_globals.get("__name__", "")
+        if module.startswith("langchain"):
+            return True
+        frame = frame.f_back
+        depth += 1
+    return False
 
 
 class OpenAIInstrumentor(BaseInstrumentor):
@@ -55,7 +73,7 @@ class OpenAIInstrumentor(BaseInstrumentor):
     def _intercept(self, client_self: Any, args: tuple, kwargs: dict, original_fn: Any) -> Any:
         from ..core.tracer import Tracer
         trace = Tracer.current()
-        if trace is None:
+        if trace is None or _handled_by_langchain():
             return original_fn(client_self, *args, **kwargs)
         return self._capture(client_self, args, kwargs, original_fn, trace)
 
@@ -107,7 +125,7 @@ class OpenAIInstrumentor(BaseInstrumentor):
     async def _async_intercept(self, client_self: Any, args: tuple, kwargs: dict, original_fn: Any) -> Any:
         from ..core.tracer import Tracer
         trace = Tracer.current()
-        if trace is None:
+        if trace is None or _handled_by_langchain():
             return await original_fn(client_self, *args, **kwargs)
         return await self._async_capture(client_self, args, kwargs, original_fn, trace)
 

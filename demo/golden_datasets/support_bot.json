@@ -1,0 +1,28 @@
+{
+  "name": "support-bot-v1",
+  "criteria": [
+    {"name": "faithfulness", "description": "A resposta e fiel ao expected, sem inventar fatos?"},
+    {"name": "relevance", "description": "A resposta responde diretamente a pergunta do usuario?"}
+  ],
+  "threshold": 0.7,
+  "cases": [
+    {
+      "id": "horario",
+      "input": "Qual o horario de atendimento?",
+      "expected": "Atendemos de segunda a sexta, das 8h as 18h.",
+      "metadata": {"tag": "faq"}
+    },
+    {
+      "id": "reembolso",
+      "input": "Como peco reembolso?",
+      "expected": "Voce pode solicitar reembolso em ate 7 dias pela pagina de pedidos.",
+      "metadata": {"tag": "policy"}
+    },
+    {
+      "id": "frete",
+      "input": "Qual o prazo de entrega?",
+      "expected": "O prazo padrao de entrega e de 5 a 10 dias uteis.",
+      "metadata": {"tag": "faq"}
+    }
+  ]
+}
