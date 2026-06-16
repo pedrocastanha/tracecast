@@ -1,5 +1,16 @@
 import { useMemo, useState } from "react";
-import ReactFlow, { Background, Controls, MarkerType, Node, Edge } from "reactflow";
+import ReactFlow, {
+  Background,
+  BackgroundVariant,
+  Controls,
+  Handle,
+  Position,
+  MarkerType,
+  Node,
+  Edge,
+  NodeProps,
+} from "reactflow";
+import dagre from "dagre";
 import "reactflow/dist/style.css";
 
 interface GraphNode {
@@ -29,33 +40,86 @@ interface GraphData {
 }
 
 const TYPE_COLOR: Record<string, string> = {
-  llm: "var(--accent)",
-  tool: "var(--yellow)",
-  agent: "var(--green)",
+  llm: "#c8f751",   // signal lime
+  tool: "#fbbf24",  // amber
+  agent: "#a78bfa", // violet
 };
+const NODE_W = 216;
+const NODE_H = 60;
 
-function layout(nodes: GraphNode[]): Record<string, { x: number; y: number }> {
-  const depth: Record<string, number> = {};
-  const compute = (id: string, byId: Record<string, GraphNode>, seen: Set<string>): number => {
-    if (id in depth) return depth[id];
-    if (seen.has(id)) return 0;
-    seen.add(id);
-    const node = byId[id];
-    const d = node && node.parent_span_id ? compute(node.parent_span_id, byId, seen) + 1 : 0;
-    depth[id] = d;
-    return d;
-  };
-  const byId: Record<string, GraphNode> = {};
-  nodes.forEach((n) => (byId[n.id] = n));
-  nodes.forEach((n) => compute(n.id, byId, new Set()));
+function colorFor(n: { type: string; status: string }) {
+  if (n.status === "error") return "#fb7185";
+  return TYPE_COLOR[n.type] ?? "#5eead4";
+}
 
-  const perLevel: Record<number, number> = {};
+function fmtMs(ms: number | null) {
+  if (ms == null) return null;
+  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
+}
+
+// ── Custom node: type dot + name, then a dim metrics line ───────────────────
+type NodeData = { name: string; type: string; status: string; color: string; meta: string; selected: boolean };
+
+function SpanNode({ data }: NodeProps<NodeData>) {
+  return (
+    <div
+      style={{
+        width: NODE_W,
+        boxSizing: "border-box",
+        background: "var(--surface)",
+        border: `1px solid ${data.selected ? data.color : "var(--border-strong)"}`,
+        borderLeft: `3px solid ${data.color}`,
+        borderRadius: 9,
+        padding: "9px 12px",
+        boxShadow: data.selected ? `0 0 0 1px ${data.color}, 0 6px 20px rgba(0,0,0,.45)` : "0 2px 8px rgba(0,0,0,.3)",
+        transition: "border-color .12s ease, box-shadow .12s ease",
+        cursor: "pointer",
+      }}
+    >
+      <Handle type="target" position={Position.Top} style={{ opacity: 0, width: 1, height: 1 }} />
+      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 3 }}>
+        <span style={{ width: 7, height: 7, borderRadius: "50%", background: data.color, flexShrink: 0, boxShadow: `0 0 6px ${data.color}66` }} />
+        <span
+          style={{
+            fontFamily: "var(--mono)",
+            fontSize: 11.5,
+            color: "var(--text)",
+            fontWeight: 500,
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+          title={data.name}
+        >
+          {data.name}
+        </span>
+      </div>
+      <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--text-faint)", letterSpacing: "-0.02em" }}>
+        {data.meta || "—"}
+      </div>
+      <Handle type="source" position={Position.Bottom} style={{ opacity: 0, width: 1, height: 1 }} />
+    </div>
+  );
+}
+
+const NODE_TYPES = { span: SpanNode };
+
+// ── dagre top-down layout using traversal + nesting edges ───────────────────
+function layout(nodes: GraphNode[], layoutEdges: Array<[string, string]>): Record<string, { x: number; y: number }> {
+  const g = new dagre.graphlib.Graph();
+  g.setGraph({ rankdir: "TB", nodesep: 26, ranksep: 66, marginx: 24, marginy: 24 });
+  g.setDefaultEdgeLabel(() => ({}));
+  nodes.forEach((n) => g.setNode(n.id, { width: NODE_W, height: NODE_H }));
+  const ids = new Set(nodes.map((n) => n.id));
+  layoutEdges.forEach(([from, to]) => {
+    if (ids.has(from) && ids.has(to) && from !== to) g.setEdge(from, to);
+  });
+  dagre.layout(g);
   const pos: Record<string, { x: number; y: number }> = {};
   nodes.forEach((n) => {
-    const d = depth[n.id] ?? 0;
-    const idx = perLevel[d] ?? 0;
-    perLevel[d] = idx + 1;
-    pos[n.id] = { x: idx * 240, y: d * 130 };
+    const node = g.node(n.id);
+    // dagre returns center coords; reactflow wants top-left
+    pos[n.id] = node ? { x: node.x - NODE_W / 2, y: node.y - NODE_H / 2 } : { x: 0, y: 0 };
   });
   return pos;
 }
@@ -64,51 +128,85 @@ export function TraceGraph({ data, onSelect }: { data: GraphData; onSelect: (id:
   const [selected, setSelected] = useState<string | null>(null);
 
   const { nodes, edges } = useMemo(() => {
-    const pos = layout(data.nodes);
-    const rfNodes: Node[] = data.nodes.map((n) => ({
-      id: n.id,
-      position: pos[n.id] ?? { x: 0, y: 0 },
-      data: {
-        label: `${n.name}${n.total_tokens ? ` · ${n.total_tokens}tok` : ""}${
-          n.latency_ms != null ? ` · ${n.latency_ms}ms` : ""
-        }`,
-      },
-      style: {
-        border: `2px solid ${n.status === "error" ? "var(--red)" : TYPE_COLOR[n.type] ?? "var(--accent)"}`,
-        borderRadius: 8,
-        padding: 8,
-        background: "var(--surface)",
-        color: "var(--text)",
-        fontSize: 12,
-        width: 200,
-        outline: selected === n.id ? "2px solid var(--accent)" : "none",
-      },
-    }));
-    const rfEdges: Edge[] = data.edges.map((e, i) => ({
-      id: `e${i}`,
+    // Traversal flow comes from data.edges; nesting from parent_span_id.
+    const traversalKeys = new Set(data.edges.map((e) => `${e.from}->${e.to}`));
+    const parentEdges: Array<[string, string]> = data.nodes
+      .filter((n) => n.parent_span_id && !traversalKeys.has(`${n.parent_span_id}->${n.id}`))
+      .map((n) => [n.parent_span_id as string, n.id]);
+
+    const layoutEdges: Array<[string, string]> = [
+      ...data.edges.map((e) => [e.from, e.to] as [string, string]),
+      ...parentEdges,
+    ];
+    const pos = layout(data.nodes, layoutEdges);
+
+    const rfNodes: Node[] = data.nodes.map((n) => {
+      const color = colorFor(n);
+      const metaParts = [
+        n.total_tokens ? `${n.total_tokens.toLocaleString()} tok` : null,
+        fmtMs(n.latency_ms),
+        n.cost_usd ? `$${n.cost_usd.toFixed(4)}` : null,
+      ].filter(Boolean);
+      return {
+        id: n.id,
+        type: "span",
+        position: pos[n.id] ?? { x: 0, y: 0 },
+        data: { name: n.name, type: n.type, status: n.status, color, meta: metaParts.join("  ·  "), selected: selected === n.id },
+        draggable: true,
+      };
+    });
+
+    // Traversal edges: solid lime arrows (animated when conditional).
+    const flowEdges: Edge[] = data.edges.map((e, i) => ({
+      id: `t${i}`,
       source: e.from,
       target: e.to,
+      type: "smoothstep",
       animated: !!e.conditional,
-      markerEnd: { type: MarkerType.ArrowClosed },
-      style: { stroke: "var(--border)" },
+      markerEnd: { type: MarkerType.ArrowClosed, color: "#c8f751", width: 18, height: 18 },
+      style: { stroke: "#c8f751", strokeWidth: 2, strokeDasharray: e.conditional ? "6 4" : undefined },
     }));
-    return { nodes: rfNodes, edges: rfEdges };
+
+    // Nesting edges (parent → child not already a flow edge): dashed + faint.
+    const nestEdges: Edge[] = parentEdges.map(([from, to], i) => ({
+      id: `n${i}`,
+      source: from,
+      target: to,
+      type: "smoothstep",
+      markerEnd: { type: MarkerType.Arrow, color: "#565d70", width: 14, height: 14 },
+      style: { stroke: "#565d70", strokeWidth: 1.2, strokeDasharray: "2 4", opacity: 0.7 },
+    }));
+
+    return { nodes: rfNodes, edges: [...nestEdges, ...flowEdges] };
   }, [data, selected]);
 
   return (
-    <div style={{ height: 480, border: "1px solid var(--border)", borderRadius: 8 }}>
+    <div style={{ height: 560, border: "1px solid var(--border)", borderRadius: "var(--radius)", background: "var(--bg-2)", overflow: "hidden" }}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
+        nodeTypes={NODE_TYPES}
         fitView
+        fitViewOptions={{ padding: 0.18 }}
+        minZoom={0.2}
         onNodeClick={(_, node) => {
           setSelected(node.id);
           onSelect(node.id);
         }}
+        onPaneClick={() => setSelected(null)}
         proOptions={{ hideAttribution: true }}
       >
-        <Background />
-        <Controls />
+        <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#222734" />
+        <Controls showInteractive={false} style={{ borderRadius: 8, overflow: "hidden", border: "1px solid var(--border)" }} />
+        {/* Legend */}
+        <div style={{ position: "absolute", right: 12, top: 12, zIndex: 5, display: "flex", gap: 14, padding: "8px 12px", background: "rgba(19,22,30,.85)", border: "1px solid var(--border)", borderRadius: 8, fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--text-muted)", backdropFilter: "blur(4px)" }}>
+          {[["llm", "#c8f751"], ["tool", "#fbbf24"], ["agent", "#a78bfa"], ["error", "#fb7185"]].map(([label, c]) => (
+            <span key={label} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+              <span style={{ width: 7, height: 7, borderRadius: "50%", background: c }} />
+              {label}
+            </span>
+          ))}
+        </div>
       </ReactFlow>
     </div>
   );

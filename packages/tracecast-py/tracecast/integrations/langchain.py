@@ -88,6 +88,7 @@ class TraceCastCallback(BaseCallbackHandler):
         )
         self._span_stack[run_id] = Span(
             span_id=run_id,
+            parent_span_id=self._parent_id(kwargs),
             type=SpanType.LLM,
             name=f"llm:{model}",
             model=model,
