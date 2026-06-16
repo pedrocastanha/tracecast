@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import List, Optional, Callable
 from ..models.trace import Trace
-from ..models.span import Span, SpanType
+from ..models.span import Span, SpanType, SpanStatus
 from datetime import datetime
 
 
@@ -36,7 +36,45 @@ class TraceReader:
         self._last_read = now
         return traces
 
+    def _readable(self):
+        for exporter in self._exporters:
+            if callable(getattr(exporter, "query", None)):
+                return exporter
+        return None
+
+    def query_page(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+        project_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        from_dt=None,
+        to_dt=None,
+        sort_by: str = "date",
+        order: str = "desc",
+    ):
+        exporter = self._readable()
+        if exporter is None:
+            return None
+        offset = (max(page, 1) - 1) * page_size
+        rows = exporter.query(
+            project_id=project_id, user_id=user_id, session_id=session_id,
+            from_dt=from_dt, to_dt=to_dt,
+            limit=page_size, offset=offset, sort_by=sort_by, order=order,
+        )
+        total = exporter.count(
+            project_id=project_id, user_id=user_id, session_id=session_id,
+            from_dt=from_dt, to_dt=to_dt,
+        )
+        return [_hydrate_trace(r) for r in rows], total
+
     def get_trace(self, trace_id: str) -> Optional[Trace]:
+        exporter = self._readable()
+        if exporter is not None and callable(getattr(exporter, "get", None)):
+            doc = exporter.get(trace_id)
+            return _hydrate_trace(doc) if doc else None
         for t in self.get_traces():
             if t.trace_id == trace_id:
                 return t
@@ -130,8 +168,11 @@ def _hydrate_trace(d: dict) -> Trace:
     for s in d.get("spans") or []:
         spans.append(Span(
             span_id=s.get("span_id", s.get("spanId", "")),
+            parent_span_id=s.get("parent_span_id", s.get("parentSpanId")),
             type=SpanType(s.get("type", "llm")),
             name=s.get("name", ""),
+            status=SpanStatus(s.get("status", "ok")),
+            error=s.get("error"),
             started_at=_parse_dt(s.get("started_at")),
             finished_at=_parse_dt(s.get("finished_at")),
             model=s.get("model"),
@@ -161,6 +202,7 @@ def _hydrate_trace(d: dict) -> Trace:
         latency_ms=d.get("latency_ms", d.get("latencyMs")),
         tools_used=d.get("tools_used", d.get("toolsUsed", {})),
         spans=spans,
+        edges=d.get("edges", []),
         metadata=d.get("metadata", {}),
     )
 

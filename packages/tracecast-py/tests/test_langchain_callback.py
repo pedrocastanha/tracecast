@@ -2,7 +2,7 @@ import uuid
 from unittest.mock import MagicMock
 from tracecast.core.tracer import Tracer
 from tracecast.integrations.langchain import TraceCastCallback
-from tracecast.models.span import SpanType
+from tracecast.models.span import SpanType, SpanStatus
 
 
 def _run_id():
@@ -71,7 +71,8 @@ def test_on_llm_error_fecha_span_com_erro():
         cb.on_llm_error(Exception("llm failed"), run_id=run_id)
     assert str(run_id) not in cb._span_stack
     assert len(trace.spans) == 1
-    assert trace.spans[0].metadata.get("_error") == "llm failed"
+    assert trace.spans[0].status == SpanStatus.ERROR
+    assert trace.spans[0].error == "llm failed"
     assert trace.spans[0].finished_at is not None
 
 
@@ -107,7 +108,38 @@ def test_on_tool_error_fecha_span_com_erro():
 
     assert str(run_id) not in cb._span_stack
     assert len(trace.spans) == 1
-    assert trace.spans[0].metadata.get("_error") == "tool broke"
+    assert trace.spans[0].status == SpanStatus.ERROR
+    assert trace.spans[0].error == "tool broke"
+
+def test_on_chain_start_captura_parent_span_id():
+    tracer = Tracer()
+    cb = TraceCastCallback(tracer=tracer)
+    graph_run = _run_id()
+    node_run = _run_id()
+    with tracer.trace("graph") as trace:
+        cb.on_chain_start({"name": "graph"}, {}, run_id=graph_run)
+        cb.on_chain_start({"name": "node_a"}, {}, run_id=node_run, parent_run_id=graph_run)
+        cb.on_chain_end({}, run_id=node_run)
+        cb.on_chain_end({}, run_id=graph_run)
+
+    by_id = {s.span_id: s for s in trace.spans}
+    assert by_id[str(graph_run)].parent_span_id is None
+    assert by_id[str(node_run)].parent_span_id == str(graph_run)
+
+
+def test_on_llm_start_captura_input_e_output():
+    tracer = Tracer()
+    cb = TraceCastCallback(tracer=tracer)
+    run_id = _run_id()
+    with tracer.trace("t") as trace:
+        cb.on_llm_start({"kwargs": {"model_name": "gpt-4o"}}, ["pergunta"], run_id=run_id)
+        result = MagicMock()
+        result.llm_output = {"token_usage": {"prompt_tokens": 3, "completion_tokens": 2}}
+        result.generations = [[MagicMock(text="resposta", message=None)]]
+        cb.on_llm_end(result, run_id=run_id)
+    assert trace.spans[0].input == "pergunta"
+    assert trace.spans[0].output == "resposta"
+
 
 def test_on_chain_start_e_end_registra_span_de_agent():
     tracer = Tracer()
@@ -136,7 +168,8 @@ def test_on_chain_error_fecha_span():
 
     assert str(run_id) not in cb._span_stack
     assert len(trace.spans) == 1
-    assert trace.spans[0].metadata.get("_error") == "node failed"
+    assert trace.spans[0].status == SpanStatus.ERROR
+    assert trace.spans[0].error == "node failed"
 
 def test_span_stack_vazio_apos_fluxo_completo():
     tracer = Tracer()

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
-from .base import BaseInstrumentor
+from .base import BaseInstrumentor, active_parent_id
 
 
 class GeminiInstrumentor(BaseInstrumentor):
@@ -54,6 +54,7 @@ class GeminiInstrumentor(BaseInstrumentor):
 
         span = Span(
             span_id=str(uuid.uuid4()),
+            parent_span_id=active_parent_id(),
             type=SpanType.LLM,
             name=f"llm:{model_name}",
             model=model_name,
@@ -65,7 +66,7 @@ class GeminiInstrumentor(BaseInstrumentor):
             response = original_fn(model_self, contents, **kwargs)
         except Exception as exc:
             span.finished_at = datetime.now(timezone.utc)
-            span.metadata["_error"] = str(exc)
+            span.mark_error(exc)
             trace.spans.append(span)
             raise
 

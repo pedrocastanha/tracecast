@@ -135,8 +135,8 @@ class TestCrewAIInstrumentor:
         assert len(exporter.traces) == 1
         spans = exporter.traces[0]["spans"]
         assert len(spans) == 1
-        assert "_error" in spans[0]["metadata"]
-        assert spans[0]["metadata"]["_error"] == "crew failed"
+        assert spans[0]["status"] == "error"
+        assert spans[0]["error"] == "crew failed"
         inst.unpatch()
 
     def test_unpatch_when_not_patched_is_safe(self):

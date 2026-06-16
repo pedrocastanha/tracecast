@@ -95,7 +95,8 @@ def test_atrace_exporta_mesmo_com_excecao():
     assert len(exported) == 1
     assert exported[0].finished_at is not None
 
-def test_exporter_falho_nao_propaga_excecao():
+def test_exporter_falho_nao_propaga_excecao(caplog):
+    import logging
     bad_exporter = MagicMock()
     bad_exporter.export.side_effect = IOError("disk full")
     good_exported = []
@@ -104,13 +105,30 @@ def test_exporter_falho_nao_propaga_excecao():
 
     tracer = Tracer(exporters=[bad_exporter, good_exporter])
 
-    import warnings
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        with tracer.trace("safe") as t:
+    with caplog.at_level(logging.ERROR, logger="tracecast"):
+        with tracer.trace("safe"):
             pass
+
     assert len(good_exported) == 1
-    assert any("disk full" in str(warn.message) or "MagicMock" in str(warn.message) for warn in w)
+    assert any("disk full" in rec.getMessage() for rec in caplog.records)
+
+
+def test_export_error_chama_hook():
+    captured = []
+    bad_exporter = MagicMock()
+    err = IOError("disk full")
+    bad_exporter.export.side_effect = err
+
+    def on_error(exc, trace, exporter):
+        captured.append((exc, trace.trace_id, exporter))
+
+    tracer = Tracer(exporters=[bad_exporter], on_export_error=on_error)
+    with tracer.trace("hooked"):
+        pass
+
+    assert len(captured) == 1
+    assert captured[0][0] is err
+    assert captured[0][2] is bad_exporter
 
 def test_trace_agrega_tokens_e_custo_dos_spans():
     exported = []

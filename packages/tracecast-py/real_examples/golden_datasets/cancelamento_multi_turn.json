@@ -1,0 +1,25 @@
+{
+  "name": "cancelamento-multi-turn",
+  "criteria": [
+    {"name": "correctness", "description": "O assistente segue o fluxo correto de cancelamento?"}
+  ],
+  "threshold": 0.6,
+  "cases": [
+    {
+      "id": "cancelamento_feliz",
+      "turns": [
+        {"role": "user", "content": "Quero cancelar meu pedido"},
+        {"role": "assistant", "expected": "Claro, me informe o numero do pedido para prosseguir."},
+        {"role": "user", "content": "Pedido 4567"},
+        {"role": "assistant", "expected": "Pedido 4567 cancelado com sucesso. Reembolso em ate 7 dias."}
+      ]
+    },
+    {
+      "id": "cancelamento_sem_numero",
+      "turns": [
+        {"role": "user", "content": "Cancela ai"},
+        {"role": "assistant", "expected": "Claro, me informe o numero do pedido para prosseguir."}
+      ]
+    }
+  ]
+}

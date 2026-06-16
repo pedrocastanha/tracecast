@@ -179,5 +179,5 @@ class TestTraceCastSpanHandler:
 
         spans = exporter.traces[0]["spans"]
         assert len(spans) == 1
-        assert "_error" in spans[0]["metadata"]
-        assert spans[0]["metadata"]["_error"] == "oops"
+        assert spans[0]["status"] == "error"
+        assert spans[0]["error"] == "oops"

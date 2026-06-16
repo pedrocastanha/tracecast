@@ -1,19 +1,15 @@
 #!/usr/bin/env python3
 """
-Auto-versioning script for tracecast packages.
-Reads current version, bumps it based on the specified type,
-and updates both Python and TypeScript package files.
+Auto-versioning script for the tracecast Python package.
+Reads current version and bumps it based on the specified type.
 """
 
 import argparse
-import json
 import re
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 PYPROJECT = ROOT / "packages" / "tracecast-py" / "pyproject.toml"
-PACKAGE_JSON = ROOT / "packages" / "tracecast-ts" / "package.json"
 
 
 def get_current_version():
@@ -56,20 +52,6 @@ def update_pyproject(new_version: str):
     print(f"✅ Updated pyproject.toml to v{new_version}")
 
 
-def update_package_json(new_version: str):
-    """Update version in package.json."""
-    with open(PACKAGE_JSON, "r") as f:
-        data = json.load(f)
-
-    data["version"] = new_version
-
-    with open(PACKAGE_JSON, "w") as f:
-        json.dump(data, f, indent=2)
-        f.write("\n")
-
-    print(f"✅ Updated package.json to v{new_version}")
-
-
 def main():
     parser = argparse.ArgumentParser(description="Bump version for tracecast packages")
     parser.add_argument(
@@ -92,7 +74,6 @@ def main():
     print(f"🚀 New version: v{new_version}")
 
     update_pyproject(new_version)
-    update_package_json(new_version)
 
     if args.output_file:
         Path(args.output_file).write_text(new_version)

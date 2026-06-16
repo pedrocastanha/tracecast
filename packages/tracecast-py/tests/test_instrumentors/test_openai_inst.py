@@ -122,8 +122,8 @@ class TestOpenAIInstrumentor:
         trace = exporter.traces[0]
         assert len(trace["spans"]) == 1
         span = trace["spans"][0]
-        assert "_error" in span["metadata"]
-        assert span["metadata"]["_error"] == "network error"
+        assert span["status"] == "error"
+        assert span["error"] == "network error"
         inst.unpatch()
 
     def test_async_trace_active_captures_span(self):

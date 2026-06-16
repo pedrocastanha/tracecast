@@ -2,7 +2,7 @@ import sys
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
-from .base import BaseInstrumentor
+from .base import BaseInstrumentor, active_parent_id
 
 
 def _handled_by_langchain() -> bool:
@@ -78,10 +78,6 @@ class OpenAIInstrumentor(BaseInstrumentor):
         return self._capture(client_self, args, kwargs, original_fn, trace)
 
     def _capture(self, client_self: Any, args: tuple, kwargs: dict, original_fn: Any, trace: Any) -> Any:
-        # Streaming not yet supported — pass through untracked
-        if kwargs.get("stream"):
-            return original_fn(client_self, *args, **kwargs)
-
         from ..models.span import Span, SpanType
         from ..core.token_counter import extract_tokens, extract_content, extract_input_text
         from ..core.cost_calculator import calculate_cost
@@ -91,6 +87,7 @@ class OpenAIInstrumentor(BaseInstrumentor):
 
         span = Span(
             span_id=str(uuid.uuid4()),
+            parent_span_id=active_parent_id(),
             type=SpanType.LLM,
             name=f"llm:{model}",
             model=model,
@@ -98,11 +95,17 @@ class OpenAIInstrumentor(BaseInstrumentor):
             input=input_text,
         )
 
+        if kwargs.get("stream"):
+            from ._streaming import stream_openai
+            kwargs.setdefault("stream_options", {"include_usage": True})
+            raw = original_fn(client_self, *args, **kwargs)
+            return stream_openai(raw, span, trace, model)
+
         try:
             response = original_fn(client_self, *args, **kwargs)
         except Exception as exc:
             span.finished_at = datetime.now(timezone.utc)
-            span.metadata["_error"] = str(exc)
+            span.mark_error(exc)
             trace.spans.append(span)
             raise
 
@@ -127,10 +130,6 @@ class OpenAIInstrumentor(BaseInstrumentor):
         return await self._async_capture(client_self, args, kwargs, original_fn, trace)
 
     async def _async_capture(self, client_self: Any, args: tuple, kwargs: dict, original_fn: Any, trace: Any) -> Any:
-        # Streaming not yet supported — pass through untracked
-        if kwargs.get("stream"):
-            return await original_fn(client_self, *args, **kwargs)
-
         from ..models.span import Span, SpanType
         from ..core.token_counter import extract_tokens, extract_content, extract_input_text
         from ..core.cost_calculator import calculate_cost
@@ -140,6 +139,7 @@ class OpenAIInstrumentor(BaseInstrumentor):
 
         span = Span(
             span_id=str(uuid.uuid4()),
+            parent_span_id=active_parent_id(),
             type=SpanType.LLM,
             name=f"llm:{model}",
             model=model,
@@ -147,11 +147,17 @@ class OpenAIInstrumentor(BaseInstrumentor):
             input=input_text,
         )
 
+        if kwargs.get("stream"):
+            from ._streaming import astream_openai
+            kwargs.setdefault("stream_options", {"include_usage": True})
+            raw = await original_fn(client_self, *args, **kwargs)
+            return astream_openai(raw, span, trace, model)
+
         try:
             response = await original_fn(client_self, *args, **kwargs)
         except Exception as exc:
             span.finished_at = datetime.now(timezone.utc)
-            span.metadata["_error"] = str(exc)
+            span.mark_error(exc)
             trace.spans.append(span)
             raise
 

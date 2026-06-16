@@ -1,0 +1,9 @@
+{
+  "name": "api-faq-scorers-only",
+  "threshold": 0.7,
+  "cases": [
+    {"id": "horario", "input": "Qual o horario de atendimento?", "expected": "Atendemos de segunda a sexta, das 8h as 18h."},
+    {"id": "reembolso", "input": "Como peco reembolso?", "expected": "Voce pode solicitar reembolso em ate 7 dias pela pagina de pedidos."},
+    {"id": "frete", "input": "Qual o prazo de entrega?", "expected": "O prazo padrao de entrega e de 5 a 10 dias uteis."}
+  ]
+}

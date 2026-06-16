@@ -12,9 +12,20 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional
 from .reader import TraceReader
-from .aggregator import compute_metrics, paginate_traces, _trace_summary
+from .aggregator import compute_metrics, paginate_traces, _trace_summary, build_graph
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+
+def _index_html(prefix: str) -> str:
+    index_path = STATIC_DIR / "index.html"
+    if not index_path.exists():
+        return "<h1>TraceCast Dashboard</h1><p>Static files not found.</p>"
+    html = index_path.read_text(encoding="utf-8")
+    inject = f'<script>window.__TC_PREFIX__ = "{prefix}";</script>'
+    if "__TC_PREFIX__" in html:
+        return html
+    return html.replace("</head>", f"  {inject}\n</head>", 1)
 
 
 def _mime(filename: str) -> str:
@@ -42,7 +53,7 @@ def _parse_iso(s: Optional[str]) -> Optional[datetime]:
         return None
 
 
-def _make_router(reader: TraceReader) -> "APIRouter":
+def _make_router(reader: TraceReader, prefix: str = "") -> "APIRouter":
     if not HAS_FASTAPI:
         raise ImportError("FastAPI is required for dashboard. Install with: pip install fastapi")
 
@@ -54,16 +65,29 @@ def _make_router(reader: TraceReader) -> "APIRouter":
         page_size: int = Query(50, ge=1, le=200),
         project_id: Optional[str] = Query(None),
         user_id: Optional[str] = Query(None),
+        session_id: Optional[str] = Query(None),
         from_dt: Optional[str] = Query(None, alias="from"),
         to_dt: Optional[str] = Query(None, alias="to"),
         sort_by: str = Query("date"),
         order: str = Query("desc"),
     ):
-        traces = reader.get_traces()
         from_parsed = _parse_iso(from_dt)
         to_parsed = _parse_iso(to_dt)
+        pushed = reader.query_page(
+            page=page, page_size=page_size,
+            project_id=project_id, user_id=user_id, session_id=session_id,
+            from_dt=from_parsed, to_dt=to_parsed, sort_by=sort_by, order=order,
+        )
+        if pushed is not None:
+            page_items, total = pushed
+            return {
+                "traces": [_trace_summary(t) for t in page_items],
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+            }
         return paginate_traces(
-            traces,
+            reader.get_traces(),
             page=page,
             page_size=page_size,
             project_id=project_id,
@@ -80,6 +104,13 @@ def _make_router(reader: TraceReader) -> "APIRouter":
         if not trace:
             raise HTTPException(status_code=404, detail="Trace not found")
         return trace.to_dict()
+
+    @router.get("/api/traces/{trace_id}/graph")
+    def api_trace_graph(trace_id: str):
+        trace = reader.get_trace(trace_id)
+        if not trace:
+            raise HTTPException(status_code=404, detail="Trace not found")
+        return build_graph(trace)
 
     @router.get("/api/metrics")
     def api_metrics(
@@ -109,10 +140,7 @@ def _make_router(reader: TraceReader) -> "APIRouter":
 
     @router.get("/", response_class=HTMLResponse)
     def dashboard_index():
-        index_path = STATIC_DIR / "index.html"
-        if index_path.exists():
-            return HTMLResponse(content=index_path.read_text(encoding="utf-8"))
-        return HTMLResponse(content="<h1>TraceCast Dashboard</h1><p>Static files not found.</p>")
+        return HTMLResponse(content=_index_html(prefix))
 
     @router.get("/api/sessions")
     def api_sessions():
@@ -166,9 +194,8 @@ def _make_router(reader: TraceReader) -> "APIRouter":
     def spa_fallback(path: str):
         if path.startswith("api/"):
             raise HTTPException(status_code=404)
-        index_path = STATIC_DIR / "index.html"
-        if index_path.exists():
-            return HTMLResponse(content=index_path.read_text(encoding="utf-8"))
-        raise HTTPException(status_code=404)
+        if not (STATIC_DIR / "index.html").exists():
+            raise HTTPException(status_code=404)
+        return HTMLResponse(content=_index_html(prefix))
 
     return router

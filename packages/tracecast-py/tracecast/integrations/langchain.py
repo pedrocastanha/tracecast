@@ -9,6 +9,35 @@ from ..core.logger import TraceCastLogger
 from ..models.span import Span, SpanType
 
 
+def _join_prompts(prompts) -> Optional[str]:
+    if not prompts:
+        return None
+    if isinstance(prompts, (list, tuple)):
+        return "\n".join(str(p) for p in prompts)
+    return str(prompts)
+
+
+def _stringify(value) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
+def _extract_generation_text(response) -> Optional[str]:
+    try:
+        generation = response.generations[0][0]
+    except (IndexError, AttributeError):
+        return None
+    text = getattr(generation, "text", None)
+    if text:
+        return text
+    message = getattr(generation, "message", None)
+    content = getattr(message, "content", None) if message else None
+    return _stringify(content)
+
+
 class TraceCastCallback(BaseCallbackHandler):
     def __init__(self, tracer: Tracer):
         self.tracer = tracer
@@ -27,6 +56,10 @@ class TraceCastCallback(BaseCallbackHandler):
         return None
 
 
+    def _parent_id(self, kwargs) -> Optional[str]:
+        parent = kwargs.get("parent_run_id")
+        return str(parent) if parent else None
+
     def on_llm_start(self, serialized, prompts, **kwargs):
         run_id = str(kwargs.get("run_id", uuid.uuid4()))
         model = (
@@ -36,6 +69,7 @@ class TraceCastCallback(BaseCallbackHandler):
         )
         self._span_stack[run_id] = Span(
             span_id=run_id,
+            parent_span_id=self._parent_id(kwargs),
             type=SpanType.LLM,
             name=f"llm:{model}",
             model=model,
@@ -124,6 +158,7 @@ class TraceCastCallback(BaseCallbackHandler):
             span.model, span.tokens_in, span.tokens_out,
             tokens_in_cached=span.tokens_in_cached,
         )
+        span.output = _extract_generation_text(response)
         trace = self.tracer.current()
         if trace:
             trace.spans.append(span)
@@ -151,9 +186,11 @@ class TraceCastCallback(BaseCallbackHandler):
         name = serialized.get("name", "unknown_tool")
         self._span_stack[run_id] = Span(
             span_id=run_id,
+            parent_span_id=self._parent_id(kwargs),
             type=SpanType.TOOL,
             name=name,
             started_at=datetime.now(timezone.utc),
+            input=_stringify(input_str),
         )
         if self._logger:
             self._logger.tool_start(self._trace_name(), name=name, input_str=input_str)
@@ -164,6 +201,7 @@ class TraceCastCallback(BaseCallbackHandler):
         if not span:
             return
         span.finished_at = datetime.now(timezone.utc)
+        span.output = _stringify(output)
         trace = self.tracer.current()
         if trace:
             trace.spans.append(span)
@@ -188,9 +226,11 @@ class TraceCastCallback(BaseCallbackHandler):
             name = kwargs.get("name", "chain")
         self._span_stack[run_id] = Span(
             span_id=run_id,
+            parent_span_id=str(parent_run_id) if parent_run_id else None,
             type=SpanType.AGENT,
             name=f"chain:{name}",
             started_at=datetime.now(timezone.utc),
+            input=_stringify(inputs),
         )
         if self._logger and parent_run_id is None:
             self._logger.chain_start(self._trace_name(), name=name)
@@ -201,6 +241,7 @@ class TraceCastCallback(BaseCallbackHandler):
         if not span:
             return
         span.finished_at = datetime.now(timezone.utc)
+        span.output = _stringify(outputs)
         trace = self.tracer.current()
         if trace:
             trace.spans.append(span)
@@ -218,7 +259,7 @@ class TraceCastCallback(BaseCallbackHandler):
         if not span:
             return
         span.finished_at = datetime.now(timezone.utc)
-        span.metadata = {**(span.metadata or {}), "_error": str(error)}
+        span.mark_error(error)
         trace = self.tracer.current()
         if trace:
             trace.spans.append(span)

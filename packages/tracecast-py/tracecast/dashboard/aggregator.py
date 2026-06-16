@@ -132,6 +132,31 @@ def _trace_summary(trace: Trace) -> dict:
     }
 
 
+def build_graph(trace: Trace) -> dict:
+    nodes = []
+    for s in trace.spans:
+        nodes.append({
+            "id": s.span_id,
+            "parent_span_id": s.parent_span_id,
+            "name": s.name,
+            "type": s.type.value,
+            "status": s.status.value if hasattr(s.status, "value") else s.status,
+            "model": s.model,
+            "tokens_in": s.tokens_in,
+            "tokens_out": s.tokens_out,
+            "total_tokens": s.total_tokens,
+            "cost_usd": s.cost_usd,
+            "latency_ms": s.latency_ms,
+            "error": s.error,
+        })
+    return {
+        "trace_id": trace.trace_id,
+        "name": trace.name,
+        "nodes": nodes,
+        "edges": trace.edges,
+    }
+
+
 def compute_sessions(traces: List[Trace]) -> list:
     """Aggregate traces by session_id. Traces without session_id are skipped."""
     groups: dict[str, dict] = {}

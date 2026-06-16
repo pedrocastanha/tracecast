@@ -1,3 +1,4 @@
+import asyncio
 from abc import ABC, abstractmethod
 from ..models.trace import Trace
 
@@ -12,4 +13,4 @@ class BaseExporter(ABC):
             self.export(trace)
 
     async def aexport(self, trace: Trace) -> None:
-        self.export(trace)
+        await asyncio.to_thread(self.export, trace)

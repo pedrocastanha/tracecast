@@ -1,7 +1,9 @@
 import json
+import threading
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Set
 from .base import BaseExporter
+from .query import sort_field
 from ..models.trace import Trace
 
 _ALL_COLUMNS: List[str] = [
@@ -95,6 +97,8 @@ class PostgresExporter(BaseExporter):
         self._table = table
         self._autocommit = autocommit
         self._conn = None
+        self._read_conn = None
+        self._read_lock = threading.Lock()
 
         if include_fields is not None:
             chosen = set(include_fields) | _REQUIRED_COLUMNS
@@ -153,9 +157,92 @@ class PostgresExporter(BaseExporter):
         if not self._autocommit:
             conn.commit()
 
+    def _get_read_conn(self):
+        if self._read_conn is None or self._read_conn.closed:
+            self._read_conn = self._psycopg2.connect(self._dsn)
+            self._read_conn.autocommit = True
+        return self._read_conn
+
+    def _where(self, project_id, user_id, session_id, from_dt, to_dt):
+        clauses: List[str] = []
+        params: List[Any] = []
+        if project_id:
+            clauses.append("project_id = %s")
+            params.append(project_id)
+        if user_id:
+            clauses.append("user_id = %s")
+            params.append(user_id)
+        if session_id:
+            clauses.append("session_id = %s")
+            params.append(session_id)
+        if from_dt:
+            clauses.append("started_at >= %s")
+            params.append(from_dt)
+        if to_dt:
+            clauses.append("started_at <= %s")
+            params.append(to_dt)
+        sql = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        return sql, params
+
+    def query(
+        self,
+        *,
+        project_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        from_dt: Optional[datetime] = None,
+        to_dt: Optional[datetime] = None,
+        limit: int = 50,
+        offset: int = 0,
+        sort_by: str = "date",
+        order: str = "desc",
+    ) -> List[dict]:
+        where, params = self._where(project_id, user_id, session_id, from_dt, to_dt)
+        direction = "DESC" if order == "desc" else "ASC"
+        sql = (
+            f'SELECT * FROM "{self._table}"{where} '
+            f'ORDER BY {sort_field(sort_by)} {direction} LIMIT %s OFFSET %s'
+        )
+        with self._read_lock:
+            conn = self._get_read_conn()
+            with conn.cursor() as cur:
+                cur.execute(sql, (*params, max(limit, 0), max(offset, 0)))
+                cols = [desc[0] for desc in cur.description]
+                rows = cur.fetchall()
+        return [dict(zip(cols, row)) for row in rows]
+
+    def get(self, trace_id: str) -> Optional[dict]:
+        with self._read_lock:
+            conn = self._get_read_conn()
+            with conn.cursor() as cur:
+                cur.execute(f'SELECT * FROM "{self._table}" WHERE trace_id = %s', (trace_id,))
+                row = cur.fetchone()
+                if row is None:
+                    return None
+                cols = [desc[0] for desc in cur.description]
+        return dict(zip(cols, row))
+
+    def count(
+        self,
+        *,
+        project_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        from_dt: Optional[datetime] = None,
+        to_dt: Optional[datetime] = None,
+    ) -> int:
+        where, params = self._where(project_id, user_id, session_id, from_dt, to_dt)
+        with self._read_lock:
+            conn = self._get_read_conn()
+            with conn.cursor() as cur:
+                cur.execute(f'SELECT COUNT(*) FROM "{self._table}"{where}', tuple(params))
+                return int(cur.fetchone()[0])
+
     def close(self) -> None:
         if self._conn and not self._conn.closed:
             self._conn.close()
+        if self._read_conn and not self._read_conn.closed:
+            self._read_conn.close()
 
     def __enter__(self):
         return self

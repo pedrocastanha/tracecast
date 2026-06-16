@@ -8,13 +8,13 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "copy:py": "cp -r dist/* ../tracecast-py/tracecast/dashboard/static/",
-    "copy:ts": "cp -r dist/* ../tracecast-ts/src/dashboard/static/",
-    "copy": "npm run copy:py && npm run copy:ts"
+    "copy": "npm run copy:py"
   },
   "dependencies": {
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "react-router-dom": "^6.28.0",
+    "reactflow": "^11.11.4",
     "recharts": "^2.14.0"
   },
   "devDependencies": {
