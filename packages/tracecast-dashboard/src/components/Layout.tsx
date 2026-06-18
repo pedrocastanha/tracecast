@@ -7,6 +7,9 @@ const NAV_ITEMS = [
   { to: "/models", label: "Models" },
   { to: "/sessions", label: "Sessions" },
   { to: "/projects", label: "Projects" },
+  { to: "/evals", label: "Evaluators" },
+  { to: "/evals/compare", label: "Compare" },
+  { to: "/prompts", label: "Prompts" },
 ];
 
 export function Layout() {

@@ -12,6 +12,7 @@ export function TraceDetail() {
   const navigate = useNavigate();
   const { data: t, loading, error } = useApi<AnyObj>(`/traces/${traceId}`, [traceId]);
   const { data: graph } = useApi<AnyObj>(`/traces/${traceId}/graph`, [traceId]);
+  const { data: scoresData } = useApi<AnyObj>(`/traces/${traceId}/scores`, [traceId]);
   const [tab, setTab] = useState<"graph" | "list">("graph");
   const [selected, setSelected] = useState<string | null>(null);
 
@@ -19,6 +20,10 @@ export function TraceDetail() {
   if (error || !t) return <div style={{ color: "var(--red)" }}>Error: {error ?? "Trace not found"}</div>;
 
   const selectedSpan = t.spans?.find((s: AnyObj) => s.span_id === selected) ?? null;
+  const scores = scoresData?.scores ?? [];
+
+  const kindColor = (k: string) =>
+    k === "human" ? "var(--accent)" : k === "llm" ? "var(--yellow)" : "var(--green)";
 
   const tabBtn = (key: "graph" | "list", label: string) => {
     const active = tab === key;
@@ -99,6 +104,40 @@ export function TraceDetail() {
           <SpanTimeline spans={t.spans} />
         </>
       )}
+
+      <div style={{ marginTop: 28 }}>
+        <h3 style={{ fontSize: 14, marginBottom: 10 }}>Scores ({scores.length})</h3>
+        {scores.length === 0 ? (
+          <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
+            No scores attached. Use <code>tracecast.score(trace_id, ...)</code> or enable online eval.
+          </div>
+        ) : (
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ textAlign: "left", color: "var(--text-muted)", borderBottom: "1px solid var(--border)" }}>
+                <th style={{ padding: 8 }}>Name</th>
+                <th style={{ padding: 8 }}>Value</th>
+                <th style={{ padding: 8 }}>Kind</th>
+                <th style={{ padding: 8 }}>Source</th>
+                <th style={{ padding: 8 }}>Comment</th>
+              </tr>
+            </thead>
+            <tbody>
+              {scores.map((s: AnyObj) => (
+                <tr key={s.score_id} style={{ borderBottom: "1px solid var(--border)" }}>
+                  <td style={{ padding: 8 }}>{s.name}</td>
+                  <td style={{ padding: 8, fontFamily: "var(--mono)" }}>
+                    {s.string_value ?? (typeof s.value === "number" ? s.value : String(s.value))}
+                  </td>
+                  <td style={{ padding: 8, color: kindColor(s.kind), fontWeight: 600 }}>{s.kind}</td>
+                  <td style={{ padding: 8, color: "var(--text-muted)" }}>{s.source ?? "—"}</td>
+                  <td style={{ padding: 8, color: "var(--text-muted)" }}>{s.comment ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
     </div>
   );
 }

@@ -7,6 +7,10 @@ import { Models } from "./pages/Models";
 import { Sessions } from "./pages/Sessions";
 import { Projects } from "./pages/Projects";
 import { TraceDetail } from "./pages/TraceDetail";
+import { Evaluators } from "./pages/Evaluators";
+import { EvalRunDetail } from "./pages/EvalRunDetail";
+import { EvalCompare } from "./pages/EvalCompare";
+import { Prompts } from "./pages/Prompts";
 
 export function App() {
   return (
@@ -19,6 +23,10 @@ export function App() {
           <Route path="/models" element={<Models />} />
           <Route path="/sessions" element={<Sessions />} />
           <Route path="/projects" element={<Projects />} />
+          <Route path="/evals" element={<Evaluators />} />
+          <Route path="/evals/compare" element={<EvalCompare />} />
+          <Route path="/evals/:runId" element={<EvalRunDetail />} />
+          <Route path="/prompts" element={<Prompts />} />
         </Route>
       </Routes>
     </BrowserRouter>
