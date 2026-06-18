@@ -40,13 +40,24 @@ class Tracer:
         logging: bool = False,
         log_prefix: Optional[str] = None,
         on_export_error: Optional[Callable[[Exception, Trace, BaseExporter], None]] = None,
+        online_eval=None,
     ):
         self.exporters = exporters or []
         self.on_export_error = on_export_error
+        self.online_eval = online_eval
         self._tc_logger = None
         if logging:
             from .logger import TraceCastLogger
             self._tc_logger = TraceCastLogger(prefix=log_prefix)
+
+    def _run_online_eval(self, trace: Trace) -> None:
+        if self.online_eval is None:
+            return
+        try:
+            self.online_eval.maybe_evaluate(trace, default_exporters=self.exporters)
+        except Exception:
+            from .logger import _logger
+            _logger.error("TraceCast: online_eval failed for trace %s", trace.trace_id, exc_info=True)
 
     @contextmanager
     def trace(self, name: str, session_id=None, user_id=None, project_id=None, project_name=None, metadata=None):
@@ -129,6 +140,7 @@ class Tracer:
                 exporter.export(trace)
             except Exception as exc:
                 self._handle_export_error(exc, trace, exporter)
+        self._run_online_eval(trace)
 
     async def _aexport(self, trace: Trace) -> None:
         for exporter in self.exporters:
@@ -136,6 +148,7 @@ class Tracer:
                 await exporter.aexport(trace)
             except Exception as exc:
                 self._handle_export_error(exc, trace, exporter)
+        self._run_online_eval(trace)
 
     @staticmethod
     def current() -> Optional[Trace]:

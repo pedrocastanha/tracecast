@@ -82,3 +82,55 @@ def load_dataset(path: str) -> GoldenDataset:
     with fp.open("r", encoding="utf-8") as f:
         data = json.load(f)
     return parse_dataset(data, path=str(fp))
+
+
+def _resolve_trace(trace, exporters) -> Optional[dict]:
+    if isinstance(trace, dict):
+        return trace
+    if hasattr(trace, "to_dict"):
+        return trace.to_dict()
+    for exporter in exporters or []:
+        getter = getattr(exporter, "get", None)
+        if callable(getter):
+            doc = getter(trace)
+            if doc:
+                return doc
+        for doc in getattr(exporter, "traces", []):
+            if doc.get("trace_id") == trace:
+                return doc
+    return None
+
+
+def _derive_input(doc: dict) -> Optional[str]:
+    for span in doc.get("spans", []):
+        if span.get("input"):
+            return span["input"]
+    return None
+
+
+def add_to_dataset(trace, path: str, *, expected: Optional[str] = None,
+                   input: Optional[str] = None, context: Optional[str] = None,
+                   exporters: Optional[list] = None) -> None:
+    """Promote a production trace (dict, Trace, or trace_id) to a golden case,
+    appending it to the dataset JSON at `path` (created if missing)."""
+    doc = _resolve_trace(trace, exporters)
+    if doc is None:
+        raise ValueError(f"trace not found: {trace}")
+
+    case: Dict[str, Any] = {
+        "id": doc.get("trace_id"),
+        "input": input if input is not None else (_derive_input(doc) or ""),
+        "expected": expected,
+    }
+    if context is not None:
+        case["context"] = context
+
+    fp = Path(path)
+    if fp.exists():
+        data = json.loads(fp.read_text(encoding="utf-8"))
+    else:
+        if fp.parent != Path("."):
+            fp.parent.mkdir(parents=True, exist_ok=True)
+        data = {"name": fp.stem, "cases": []}
+    data.setdefault("cases", []).append(case)
+    fp.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
