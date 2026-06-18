@@ -78,5 +78,25 @@ Pesquisa web feita (LangFuse/LangSmith/DeepEval/RAGAS). Decisões-chave:
   de runs · 4 online eval por amostragem + `add_to_dataset` · 5 prompt management versionado.
 - Princípio: zero infra nova; tudo via contrato de exporter (AD-1) e dashboard existentes.
 - AD-10: paridade TS fora de escopo (tracecast-ts/src só tem dashboard/, SDK TS foi removida — C17).
-- Pendente decisão do usuário antes de Executar: ordem de entrega; `detoxify` opcional vs fallback;
-  buildar frontend agora vs só backend+endpoints.
+- Decisões do usuário (2026-06-17): (1) entregar em ordem 0→5; (2) `detoxify` opcional aceito;
+  (3) backend+endpoints primeiro, UI depois.
+
+### EXECUTADO (2026-06-17) — backend completo das 6 fases, TDD, branch `feature/observability-platform`
+Suite: **351 passed** (era 300 no baseline desta sessão). Commits atômicos por fatia. Status:
+- **Fase 0 (G1)** ✅ `export_eval/query_evals/get_eval` nos 4 exporters + endpoints `/api/evals`,
+  `/api/evals/{id}`, `POST /api/evals/run`. Eval agora persiste e aparece no dashboard.
+- **Fase 1 (G2)** ✅ `models/score.py` (Score validado) + `tracecast.score()` + `export_score`/
+  `query_scores` + `ScoreReader` + `GET /api/traces/{id}/scores`.
+- **Fase 2 (G3)** ✅ `eval/metrics.py` registry: presets LLM (faithfulness, answer_relevancy,
+  context_precision/recall, hallucination, conciseness) + heurística `toxicity` (detoxify lazy,
+  fallback termos). Judge/dataset/runner ganham `context` (RAG). Runner resolve nomes de métrica.
+- **Fase 3 (G5)** ✅ `eval/compare.py` + `GET /api/evals/compare` (registrado ANTES de `/{run_id}`).
+- **Fase 4 (G6,G7)** ✅ `eval/online.py` OnlineEval (amostragem, background, best-effort) + hook no
+  Tracer (`online_eval=`, chamado após export em `_export`/`_aexport`). `add_to_dataset()` promove
+  trace a caso golden.
+- **Fase 5 (G4)** ✅ `prompts/` (PromptVersion + client com cache TTL, label resolution, auto-link
+  versão→trace) + persistência nos 4 exporters + `PromptReader` + `/api/prompts`.
+- **PENDENTE (UI)**: T10 (painel Scores no trace detail), T16-UI (view compare), T24 (aba Prompts),
+  T18 doc README do OnlineEval. Frontend em `dashboard/static/` (build React). Backend/endpoints prontos.
+- Novos métodos de exporter são opcionais no BaseExporter (default no-op/[]) → degradação graciosa.
+  Idempotência: Mongo upsert, Postgres ON CONFLICT, file/dict dedup por chave lógica.
