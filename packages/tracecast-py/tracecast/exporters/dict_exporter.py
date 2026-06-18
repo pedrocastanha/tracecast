@@ -26,6 +26,7 @@ class DictExporter(BaseExporter):
         self.traces: List[Dict[str, Any]] = []
         self.evals: List[Dict[str, Any]] = []
         self.scores: List[Dict[str, Any]] = []
+        self.prompts: List[Dict[str, Any]] = []
 
     def export(self, trace: Trace) -> None:
         doc = _filter_dict(trace.to_dict(), self._include, self._exclude)
@@ -61,7 +62,18 @@ class DictExporter(BaseExporter):
             from_dt=from_dt, to_dt=to_dt, limit=limit, offset=offset,
         )
 
+    def export_prompt(self, prompt) -> None:
+        doc = prompt.to_dict()
+        self.prompts = [p for p in self.prompts
+                        if not (p.get("name") == doc.get("name") and p.get("version") == doc.get("version"))]
+        self.prompts.append(doc)
+
+    def query_prompts(self, *, name=None) -> List[dict]:
+        rows = [p for p in self.prompts if name is None or p.get("name") == name]
+        return sorted(rows, key=lambda p: (p.get("name", ""), p.get("version", 0)))
+
     def clear(self) -> None:
         self.traces.clear()
         self.evals.clear()
         self.scores.clear()
+        self.prompts.clear()

@@ -195,8 +195,22 @@ def _make_router(reader: TraceReader, prefix: str = "") -> "APIRouter":
 
     from .eval_reader import EvalReader
     from .score_reader import ScoreReader
+    from .prompt_reader import PromptReader
     eval_reader = EvalReader(reader._exporters)
     score_reader = ScoreReader(reader._exporters)
+    prompt_reader = PromptReader(reader._exporters)
+
+    @router.get("/api/prompts")
+    def api_prompts():
+        prompts = prompt_reader.list_prompts()
+        return {"prompts": prompts, "total": len(prompts)}
+
+    @router.get("/api/prompts/{name}")
+    def api_prompt_detail(name: str):
+        versions = prompt_reader.get_versions(name)
+        if versions is None:
+            raise HTTPException(status_code=404, detail="Prompt not found")
+        return {"name": name, "versions": versions}
 
     @router.get("/api/traces/{trace_id}/scores")
     def api_trace_scores(trace_id: str):

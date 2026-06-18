@@ -28,6 +28,7 @@ class JsonFileExporter(BaseExporter):
             self.path.parent.mkdir(parents=True, exist_ok=True)
         self._eval_path = Path(str(self.path) + ".evals.jsonl")
         self._score_path = Path(str(self.path) + ".scores.jsonl")
+        self._prompt_path = Path(str(self.path) + ".prompts.jsonl")
         self._include: Optional[Set[str]] = set(include_fields) if include_fields is not None else None
         self._exclude: Optional[Set[str]] = set(exclude_fields) if exclude_fields is not None else None
 
@@ -91,3 +92,26 @@ class JsonFileExporter(BaseExporter):
             self._read_scores(), trace_id=trace_id, name=name,
             from_dt=from_dt, to_dt=to_dt, limit=limit, offset=offset,
         )
+
+    def _read_prompts(self) -> List[dict]:
+        if not self._prompt_path.exists():
+            return []
+        rows = []
+        for line in self._prompt_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+        return rows
+
+    def export_prompt(self, prompt) -> None:
+        doc = prompt.to_dict()
+        rows = [p for p in self._read_prompts()
+                if not (p.get("name") == doc.get("name") and p.get("version") == doc.get("version"))]
+        rows.append(doc)
+        with self._prompt_path.open("w", encoding="utf-8") as f:
+            for p in rows:
+                f.write(json.dumps(p, default=str) + "\n")
+
+    def query_prompts(self, *, name=None) -> List[dict]:
+        rows = [p for p in self._read_prompts() if name is None or p.get("name") == name]
+        return sorted(rows, key=lambda p: (p.get("name", ""), p.get("version", 0)))

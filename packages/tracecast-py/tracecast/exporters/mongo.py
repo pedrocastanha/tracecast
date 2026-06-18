@@ -41,6 +41,7 @@ class MongoExporter(BaseExporter):
         collection: str = "traces",
         eval_collection: str = "tracecast_evals",
         score_collection: str = "tracecast_scores",
+        prompt_collection: str = "tracecast_prompts",
         include_fields: Optional[Iterable[str]] = None,
         exclude_fields: Optional[Iterable[str]] = None,
     ):
@@ -49,6 +50,7 @@ class MongoExporter(BaseExporter):
         self._collection = self.col
         self._eval_collection = self._db[eval_collection]
         self._score_collection = self._db[score_collection]
+        self._prompt_collection = self._db[prompt_collection]
         self._include: Optional[Set[str]] = set(include_fields) if include_fields is not None else None
         self._exclude: Optional[Set[str]] = set(exclude_fields) if exclude_fields is not None else None
         self._indexed = False
@@ -161,5 +163,20 @@ class MongoExporter(BaseExporter):
             .sort("created_at", ASCENDING)
             .skip(max(offset, 0))
             .limit(max(limit, 0))
+        )
+        return list(cursor)
+
+    def export_prompt(self, prompt) -> None:
+        doc = prompt.to_dict()
+        self._prompt_collection.replace_one(
+            {"name": doc["name"], "version": doc["version"]}, doc, upsert=True
+        )
+
+    def query_prompts(self, *, name=None) -> List[dict]:
+        match: Dict[str, Any] = {}
+        if name:
+            match["name"] = name
+        cursor = self._prompt_collection.find(match, {"_id": 0}).sort(
+            [("name", ASCENDING), ("version", ASCENDING)]
         )
         return list(cursor)

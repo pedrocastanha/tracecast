@@ -36,3 +36,9 @@ class BaseExporter(ABC):
     def query_scores(self, *, trace_id=None, name=None,
                      from_dt=None, to_dt=None, limit: int = 100, offset: int = 0) -> list:
         return []
+
+    def export_prompt(self, prompt) -> None:
+        return None
+
+    def query_prompts(self, *, name=None) -> list:
+        return []

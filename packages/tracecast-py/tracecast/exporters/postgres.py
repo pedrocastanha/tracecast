@@ -80,6 +80,7 @@ class PostgresExporter(BaseExporter):
         table: str = "traces",
         eval_table: str = "tracecast_evals",
         score_table: str = "tracecast_scores",
+        prompt_table: str = "tracecast_prompts",
         autocommit: bool = True,
         include_fields: Optional[Iterable[str]] = None,
         exclude_fields: Optional[Iterable[str]] = None,
@@ -99,6 +100,7 @@ class PostgresExporter(BaseExporter):
         self._table = table
         self._eval_table = eval_table
         self._score_table = score_table
+        self._prompt_table = prompt_table
         self._autocommit = autocommit
         self._conn = None
         self._read_conn = None
@@ -118,6 +120,7 @@ class PostgresExporter(BaseExporter):
         self._ensure_table()
         self._ensure_eval_table()
         self._ensure_score_table()
+        self._ensure_prompt_table()
 
     def _get_conn(self):
         if self._conn is None or self._conn.closed:
@@ -159,6 +162,21 @@ class PostgresExporter(BaseExporter):
             ");\n"
             f"CREATE INDEX IF NOT EXISTS {self._score_table}_trace_idx "
             f"ON {self._score_table} (trace_id);"
+        )
+        conn = self._get_conn()
+        with conn.cursor() as cur:
+            cur.execute(sql)
+        if not self._autocommit:
+            conn.commit()
+
+    def _ensure_prompt_table(self) -> None:
+        sql = (
+            f"CREATE TABLE IF NOT EXISTS {self._prompt_table} (\n"
+            "    name       TEXT NOT NULL,\n"
+            "    version    INTEGER NOT NULL,\n"
+            "    data       JSONB NOT NULL,\n"
+            "    PRIMARY KEY (name, version)\n"
+            ");"
         )
         conn = self._get_conn()
         with conn.cursor() as cur:
@@ -387,6 +405,31 @@ class PostgresExporter(BaseExporter):
             conn = self._get_read_conn()
             with conn.cursor() as cur:
                 cur.execute(sql, (*params, max(limit, 0), max(offset, 0)))
+                rows = cur.fetchall()
+        return [r[0] for r in rows]
+
+    def export_prompt(self, prompt) -> None:
+        doc = prompt.to_dict()
+        sql = (
+            f"INSERT INTO {self._prompt_table} (name, version, data)\n"
+            "VALUES (%(name)s, %(version)s, %(data)s)\n"
+            "ON CONFLICT (name, version) DO UPDATE SET data = EXCLUDED.data;"
+        )
+        conn = self._get_conn()
+        with conn.cursor() as cur:
+            cur.execute(sql, {"name": doc["name"], "version": doc["version"],
+                              "data": self._extras.Json(doc)})
+        if not self._autocommit:
+            conn.commit()
+
+    def query_prompts(self, *, name=None) -> List[dict]:
+        where = " WHERE name = %s" if name else ""
+        params = (name,) if name else ()
+        sql = f"SELECT data FROM {self._prompt_table}{where} ORDER BY name ASC, version ASC"
+        with self._read_lock:
+            conn = self._get_read_conn()
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
                 rows = cur.fetchall()
         return [r[0] for r in rows]
 
