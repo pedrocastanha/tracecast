@@ -220,6 +220,16 @@ def _make_router(reader: TraceReader, prefix: str = "") -> "APIRouter":
         summaries = [{k: v for k, v in r.items() if k != "cases"} for r in runs]
         return {"evals": summaries, "total": len(summaries), "limit": limit, "offset": offset}
 
+    @router.get("/api/evals/compare")
+    def api_eval_compare(a: str = Query(...), b: str = Query(...)):
+        from ..eval.compare import compare
+        run_a = eval_reader.get_run(a)
+        run_b = eval_reader.get_run(b)
+        if not run_a or not run_b:
+            missing = a if not run_a else b
+            raise HTTPException(status_code=404, detail=f"Eval run not found: {missing}")
+        return compare(run_a, run_b)
+
     @router.get("/api/evals/{run_id}")
     def api_eval_detail(run_id: str):
         run = eval_reader.get_run(run_id)
