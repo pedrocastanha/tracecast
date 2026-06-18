@@ -78,6 +78,7 @@ class PostgresExporter(BaseExporter):
         self,
         dsn: str,
         table: str = "traces",
+        eval_table: str = "tracecast_evals",
         autocommit: bool = True,
         include_fields: Optional[Iterable[str]] = None,
         exclude_fields: Optional[Iterable[str]] = None,
@@ -95,6 +96,7 @@ class PostgresExporter(BaseExporter):
         self._extras = psycopg2.extras
         self._dsn = dsn
         self._table = table
+        self._eval_table = eval_table
         self._autocommit = autocommit
         self._conn = None
         self._read_conn = None
@@ -112,6 +114,7 @@ class PostgresExporter(BaseExporter):
         self._create_sql = _build_create_sql(self._table, self._columns)
         self._insert_sql = _build_insert_sql(self._table, self._columns)
         self._ensure_table()
+        self._ensure_eval_table()
 
     def _get_conn(self):
         if self._conn is None or self._conn.closed:
@@ -123,6 +126,22 @@ class PostgresExporter(BaseExporter):
         conn = self._get_conn()
         with conn.cursor() as cur:
             cur.execute(self._create_sql)
+        if not self._autocommit:
+            conn.commit()
+
+    def _ensure_eval_table(self) -> None:
+        sql = (
+            f"CREATE TABLE IF NOT EXISTS {self._eval_table} (\n"
+            "    run_id       TEXT PRIMARY KEY,\n"
+            "    project_id   TEXT,\n"
+            "    dataset_name TEXT,\n"
+            "    started_at   TIMESTAMPTZ,\n"
+            "    data         JSONB NOT NULL\n"
+            ");"
+        )
+        conn = self._get_conn()
+        with conn.cursor() as cur:
+            cur.execute(sql)
         if not self._autocommit:
             conn.commit()
 
@@ -237,6 +256,66 @@ class PostgresExporter(BaseExporter):
             with conn.cursor() as cur:
                 cur.execute(f'SELECT COUNT(*) FROM "{self._table}"{where}', tuple(params))
                 return int(cur.fetchone()[0])
+
+    def export_eval(self, run) -> None:
+        doc = run.to_dict()
+        row = {
+            "run_id":       doc["run_id"],
+            "project_id":   doc.get("project_id"),
+            "dataset_name": doc.get("dataset_name"),
+            "started_at":   doc.get("started_at"),
+            "data":         self._extras.Json(doc),
+        }
+        sql = (
+            f"INSERT INTO {self._eval_table} (run_id, project_id, dataset_name, started_at, data)\n"
+            "VALUES (%(run_id)s, %(project_id)s, %(dataset_name)s, %(started_at)s, %(data)s)\n"
+            "ON CONFLICT (run_id) DO UPDATE SET\n"
+            "    project_id = EXCLUDED.project_id,\n"
+            "    dataset_name = EXCLUDED.dataset_name,\n"
+            "    started_at = EXCLUDED.started_at,\n"
+            "    data = EXCLUDED.data;"
+        )
+        conn = self._get_conn()
+        with conn.cursor() as cur:
+            cur.execute(sql, row)
+        if not self._autocommit:
+            conn.commit()
+
+    def query_evals(self, *, project_id=None, dataset_name=None,
+                    from_dt=None, to_dt=None, limit: int = 50, offset: int = 0) -> List[dict]:
+        clauses: List[str] = []
+        params: List[Any] = []
+        if project_id:
+            clauses.append("project_id = %s")
+            params.append(project_id)
+        if dataset_name:
+            clauses.append("dataset_name = %s")
+            params.append(dataset_name)
+        if from_dt:
+            clauses.append("started_at >= %s")
+            params.append(from_dt)
+        if to_dt:
+            clauses.append("started_at <= %s")
+            params.append(to_dt)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        sql = (
+            f"SELECT data FROM {self._eval_table}{where} "
+            "ORDER BY started_at DESC NULLS LAST LIMIT %s OFFSET %s"
+        )
+        with self._read_lock:
+            conn = self._get_read_conn()
+            with conn.cursor() as cur:
+                cur.execute(sql, (*params, max(limit, 0), max(offset, 0)))
+                rows = cur.fetchall()
+        return [r[0] for r in rows]
+
+    def get_eval(self, run_id: str) -> Optional[dict]:
+        with self._read_lock:
+            conn = self._get_read_conn()
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT data FROM {self._eval_table} WHERE run_id = %s", (run_id,))
+                row = cur.fetchone()
+        return row[0] if row else None
 
     def close(self) -> None:
         if self._conn and not self._conn.closed:

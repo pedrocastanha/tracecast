@@ -39,11 +39,14 @@ class MongoExporter(BaseExporter):
         uri: str,
         db: str = "tracecast",
         collection: str = "traces",
+        eval_collection: str = "tracecast_evals",
         include_fields: Optional[Iterable[str]] = None,
         exclude_fields: Optional[Iterable[str]] = None,
     ):
-        self.col = MongoClient(uri)[db][collection]
+        self._db = MongoClient(uri)[db]
+        self.col = self._db[collection]
         self._collection = self.col
+        self._eval_collection = self._db[eval_collection]
         self._include: Optional[Set[str]] = set(include_fields) if include_fields is not None else None
         self._exclude: Optional[Set[str]] = set(exclude_fields) if exclude_fields is not None else None
         self._indexed = False
@@ -103,3 +106,32 @@ class MongoExporter(BaseExporter):
     ) -> int:
         match = _build_match(project_id, user_id, session_id, from_dt, to_dt)
         return self._collection.count_documents(match)
+
+    def export_eval(self, run) -> None:
+        doc = run.to_dict()
+        self._eval_collection.replace_one({"run_id": doc["run_id"]}, doc, upsert=True)
+
+    def query_evals(self, *, project_id=None, dataset_name=None,
+                    from_dt=None, to_dt=None, limit: int = 50, offset: int = 0) -> List[dict]:
+        match: Dict[str, Any] = {}
+        if project_id:
+            match["project_id"] = project_id
+        if dataset_name:
+            match["dataset_name"] = dataset_name
+        if from_dt or to_dt:
+            started: Dict[str, Any] = {}
+            if from_dt:
+                started["$gte"] = from_dt.isoformat()
+            if to_dt:
+                started["$lte"] = to_dt.isoformat()
+            match["started_at"] = started
+        cursor = (
+            self._eval_collection.find(match, {"_id": 0})
+            .sort("started_at", DESCENDING)
+            .skip(max(offset, 0))
+            .limit(max(limit, 0))
+        )
+        return list(cursor)
+
+    def get_eval(self, run_id: str) -> Optional[dict]:
+        return self._eval_collection.find_one({"run_id": run_id}, {"_id": 0})
