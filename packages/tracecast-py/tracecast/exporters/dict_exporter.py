@@ -1,6 +1,6 @@
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set
 from .base import BaseExporter
-from ._eval_store import filter_sort_evals
+from ._eval_store import filter_sort_evals, filter_sort_scores
 from ..models.trace import Trace
 
 
@@ -25,6 +25,7 @@ class DictExporter(BaseExporter):
         self._exclude: Optional[Set[str]] = set(exclude_fields) if exclude_fields is not None else None
         self.traces: List[Dict[str, Any]] = []
         self.evals: List[Dict[str, Any]] = []
+        self.scores: List[Dict[str, Any]] = []
 
     def export(self, trace: Trace) -> None:
         doc = _filter_dict(trace.to_dict(), self._include, self._exclude)
@@ -48,6 +49,19 @@ class DictExporter(BaseExporter):
     def get_eval(self, run_id: str) -> Optional[dict]:
         return next((e for e in self.evals if e.get("run_id") == run_id), None)
 
+    def export_score(self, score) -> None:
+        doc = score.to_dict()
+        self.scores = [s for s in self.scores if s.get("score_id") != doc.get("score_id")]
+        self.scores.append(doc)
+
+    def query_scores(self, *, trace_id=None, name=None,
+                     from_dt=None, to_dt=None, limit: int = 100, offset: int = 0) -> List[dict]:
+        return filter_sort_scores(
+            self.scores, trace_id=trace_id, name=name,
+            from_dt=from_dt, to_dt=to_dt, limit=limit, offset=offset,
+        )
+
     def clear(self) -> None:
         self.traces.clear()
         self.evals.clear()
+        self.scores.clear()

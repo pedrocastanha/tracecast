@@ -29,3 +29,10 @@ class BaseExporter(ABC):
 
     def get_eval(self, run_id: str):
         return None
+
+    def export_score(self, score) -> None:
+        return None
+
+    def query_scores(self, *, trace_id=None, name=None,
+                     from_dt=None, to_dt=None, limit: int = 100, offset: int = 0) -> list:
+        return []

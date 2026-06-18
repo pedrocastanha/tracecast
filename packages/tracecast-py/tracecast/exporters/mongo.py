@@ -40,6 +40,7 @@ class MongoExporter(BaseExporter):
         db: str = "tracecast",
         collection: str = "traces",
         eval_collection: str = "tracecast_evals",
+        score_collection: str = "tracecast_scores",
         include_fields: Optional[Iterable[str]] = None,
         exclude_fields: Optional[Iterable[str]] = None,
     ):
@@ -47,6 +48,7 @@ class MongoExporter(BaseExporter):
         self.col = self._db[collection]
         self._collection = self.col
         self._eval_collection = self._db[eval_collection]
+        self._score_collection = self._db[score_collection]
         self._include: Optional[Set[str]] = set(include_fields) if include_fields is not None else None
         self._exclude: Optional[Set[str]] = set(exclude_fields) if exclude_fields is not None else None
         self._indexed = False
@@ -135,3 +137,29 @@ class MongoExporter(BaseExporter):
 
     def get_eval(self, run_id: str) -> Optional[dict]:
         return self._eval_collection.find_one({"run_id": run_id}, {"_id": 0})
+
+    def export_score(self, score) -> None:
+        doc = score.to_dict()
+        self._score_collection.replace_one({"score_id": doc["score_id"]}, doc, upsert=True)
+
+    def query_scores(self, *, trace_id=None, name=None,
+                     from_dt=None, to_dt=None, limit: int = 100, offset: int = 0) -> List[dict]:
+        match: Dict[str, Any] = {}
+        if trace_id:
+            match["trace_id"] = trace_id
+        if name:
+            match["name"] = name
+        if from_dt or to_dt:
+            created: Dict[str, Any] = {}
+            if from_dt:
+                created["$gte"] = from_dt.isoformat()
+            if to_dt:
+                created["$lte"] = to_dt.isoformat()
+            match["created_at"] = created
+        cursor = (
+            self._score_collection.find(match, {"_id": 0})
+            .sort("created_at", ASCENDING)
+            .skip(max(offset, 0))
+            .limit(max(limit, 0))
+        )
+        return list(cursor)
