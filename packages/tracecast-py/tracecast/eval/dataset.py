@@ -9,6 +9,7 @@ class GoldenTurn:
     role: str
     content: Optional[str] = None
     expected: Optional[str] = None
+    context: Optional[str] = None
 
 
 @dataclass
@@ -16,6 +17,7 @@ class GoldenCase:
     case_id: str
     turns: List[GoldenTurn] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
+    context: Optional[str] = None
 
 
 @dataclass
@@ -31,6 +33,8 @@ def _normalize_case(raw: dict, index: int) -> GoldenCase:
     case_id = str(raw.get("id", f"case_{index}"))
     metadata = raw.get("metadata", {})
 
+    case_context = raw.get("context")
+
     if "turns" in raw:
         turns_raw = raw["turns"]
         if not isinstance(turns_raw, list) or not turns_raw:
@@ -39,17 +43,19 @@ def _normalize_case(raw: dict, index: int) -> GoldenCase:
         for t in turns_raw:
             if not isinstance(t, dict) or "role" not in t:
                 raise ValueError(f"case '{case_id}': each turn needs a 'role'")
-            turns.append(GoldenTurn(role=t["role"], content=t.get("content"), expected=t.get("expected")))
-        return GoldenCase(case_id=case_id, turns=turns, metadata=metadata)
+            turns.append(GoldenTurn(role=t["role"], content=t.get("content"),
+                                    expected=t.get("expected"), context=t.get("context")))
+        return GoldenCase(case_id=case_id, turns=turns, metadata=metadata, context=case_context)
 
     if "input" in raw:
         return GoldenCase(
             case_id=case_id,
             turns=[
                 GoldenTurn(role="user", content=str(raw["input"])),
-                GoldenTurn(role="assistant", expected=raw.get("expected")),
+                GoldenTurn(role="assistant", expected=raw.get("expected"), context=case_context),
             ],
             metadata=metadata,
+            context=case_context,
         )
 
     raise ValueError(f"case '{case_id}': must have 'input' (single-turn) or 'turns' (multi-turn)")

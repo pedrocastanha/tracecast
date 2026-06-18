@@ -7,8 +7,29 @@ from ..core.tracer import Tracer
 from .dataset import GoldenCase, GoldenDataset, load_dataset
 from .decorator import EvalTarget, get_target
 from .judge import LLMJudge
+from .metrics import get_metric
 from .models import EvalCase, EvalRun, TurnResult
 from .scorers import run_scorer
+
+
+def _normalize_criteria(raw, base_scorers):
+    """Split raw criteria (dicts or metric-name strings) into LLM judge
+    criteria and an extended scorers list (heuristic metrics appended)."""
+    criteria = []
+    scorers = list(base_scorers)
+    for entry in raw or []:
+        if isinstance(entry, str):
+            metric = get_metric(entry)
+            if metric is None:
+                raise ValueError(f"unknown metric: {entry}")
+            if metric.kind == "llm":
+                criteria.append({"name": metric.name, "description": metric.description,
+                                 "needs_context": metric.needs_context})
+            elif entry not in scorers:
+                scorers.append(entry)
+        elif isinstance(entry, dict):
+            criteria.append(entry)
+    return criteria, scorers
 
 _HISTORY_PARAMS = {"messages", "history", "conversation"}
 
@@ -37,7 +58,7 @@ def _resolve_target(target: Union[EvalTarget, str]) -> EvalTarget:
     return resolved
 
 
-def _run_case(case: GoldenCase, target, judge, criteria, threshold, tracer, run_name) -> EvalCase:
+def _run_case(case: GoldenCase, target, judge, criteria, scorers, threshold, tracer, run_name) -> EvalCase:
     result = EvalCase(case_id=case.case_id, metadata=case.metadata)
     judge_acc = {"tokens_in": 0, "tokens_out": 0, "cost": 0.0}
     try:
@@ -54,9 +75,14 @@ def _run_case(case: GoldenCase, target, judge, criteria, threshold, tracer, run_
                 output = _call_target(target.fn, history, last_user)
                 output = output if isinstance(output, str) else str(output)
 
-                scores = [run_scorer(name, output, turn.expected) for name in target.scorers]
+                turn_context = turn.context or case.context
+                scores = [run_scorer(name, output, turn.expected) for name in scorers]
                 if criteria:
-                    jr = judge.score(input=last_user, output=output, expected=turn.expected, criteria=criteria)
+                    judge_kwargs = dict(input=last_user, output=output,
+                                        expected=turn.expected, criteria=criteria)
+                    if turn_context:
+                        judge_kwargs["context"] = turn_context
+                    jr = judge.score(**judge_kwargs)
                     scores.extend(jr.scores)
                     judge_acc["tokens_in"] += jr.tokens_in
                     judge_acc["tokens_out"] += jr.tokens_out
@@ -94,7 +120,8 @@ def run_evaluation(
         dataset = target.datasets[0]
     ds = load_dataset(dataset) if isinstance(dataset, str) else dataset
 
-    criteria = target.criteria or ds.criteria
+    raw_criteria = target.criteria or ds.criteria
+    criteria, scorers = _normalize_criteria(raw_criteria, target.scorers)
     threshold = target.threshold if target.threshold is not None else (ds.threshold or 0.7)
     judge_model = target.judge_model or "gpt-4o-mini"
     if judge is None and criteria:
@@ -114,7 +141,7 @@ def run_evaluation(
     )
 
     for case in ds.cases:
-        result = _run_case(case, target, judge, criteria, threshold, tracer, run.name)
+        result = _run_case(case, target, judge, criteria, scorers, threshold, tracer, run.name)
         acc = result.metadata.pop("_judge", {})
         run.judge_tokens += acc.get("tokens_in", 0) + acc.get("tokens_out", 0)
         run.judge_cost_usd += acc.get("cost", 0.0)
