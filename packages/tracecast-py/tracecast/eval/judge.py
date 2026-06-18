@@ -45,7 +45,7 @@ def _extract_json(text: str) -> Optional[dict]:
     return None
 
 
-def _build_prompt(input_text, output, expected, criteria) -> str:
+def _build_prompt(input_text, output, expected, criteria, context=None) -> str:
     lines = [
         "Evaluate the assistant OUTPUT against the EXPECTED reference.",
         "Score each criterion from 0.0 (worst) to 1.0 (best).",
@@ -53,9 +53,10 @@ def _build_prompt(input_text, output, expected, criteria) -> str:
         f"INPUT:\n{input_text or ''}",
         f"EXPECTED:\n{expected or ''}",
         f"OUTPUT:\n{output or ''}",
-        "",
-        "CRITERIA:",
     ]
+    if context:
+        lines.append(f"CONTEXT:\n{context}")
+    lines += ["", "CRITERIA:"]
     for c in criteria:
         lines.append(f"- {c['name']}: {c.get('description', '')}")
     lines.append("")
@@ -92,11 +93,11 @@ class LLMJudge:
             tokens_out=getattr(usage, "completion_tokens", 0) or 0,
         )
 
-    def score(self, *, input, output, expected, criteria) -> JudgeResult:
+    def score(self, *, input, output, expected, criteria, context=None) -> JudgeResult:
         if not criteria:
             return JudgeResult()
         system = "You are a strict, fair evaluator of LLM outputs. Respond with JSON only."
-        user = _build_prompt(input, output, expected, criteria)
+        user = _build_prompt(input, output, expected, criteria, context=context)
         try:
             resp = self._call(system, user)
         except Exception as exc:
