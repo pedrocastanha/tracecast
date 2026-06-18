@@ -194,7 +194,14 @@ def _make_router(reader: TraceReader, prefix: str = "") -> "APIRouter":
         }
 
     from .eval_reader import EvalReader
+    from .score_reader import ScoreReader
     eval_reader = EvalReader(reader._exporters)
+    score_reader = ScoreReader(reader._exporters)
+
+    @router.get("/api/traces/{trace_id}/scores")
+    def api_trace_scores(trace_id: str):
+        scores = score_reader.list_for_trace(trace_id)
+        return {"scores": scores, "total": len(scores)}
 
     @router.get("/api/evals")
     def api_evals(
