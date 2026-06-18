@@ -193,6 +193,49 @@ def _make_router(reader: TraceReader, prefix: str = "") -> "APIRouter":
             "total_tokens": sum(t.total_tokens for t in traces),
         }
 
+    from .eval_reader import EvalReader
+    eval_reader = EvalReader(reader._exporters)
+
+    @router.get("/api/evals")
+    def api_evals(
+        project_id: Optional[str] = Query(None),
+        dataset_name: Optional[str] = Query(None),
+        from_dt: Optional[str] = Query(None, alias="from"),
+        to_dt: Optional[str] = Query(None, alias="to"),
+        limit: int = Query(50, ge=1, le=500),
+        offset: int = Query(0, ge=0),
+    ):
+        runs = eval_reader.list_runs(
+            project_id=project_id, dataset_name=dataset_name,
+            from_dt=_parse_iso(from_dt), to_dt=_parse_iso(to_dt),
+            limit=limit, offset=offset,
+        )
+        summaries = [{k: v for k, v in r.items() if k != "cases"} for r in runs]
+        return {"evals": summaries, "total": len(summaries), "limit": limit, "offset": offset}
+
+    @router.get("/api/evals/{run_id}")
+    def api_eval_detail(run_id: str):
+        run = eval_reader.get_run(run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="Eval run not found")
+        return run
+
+    @router.post("/api/evals/run")
+    def api_eval_run(body: dict):
+        from ..eval.decorator import get_target, list_targets
+        from ..eval.runner import run_evaluation
+        if not list_targets():
+            raise HTTPException(
+                status_code=501,
+                detail="No evaluation targets registered in this process. "
+                       "The standalone server is read-only for evals.",
+            )
+        target_name = body.get("target")
+        if get_target(target_name) is None:
+            raise HTTPException(status_code=404, detail=f"Eval target not registered: {target_name}")
+        run = run_evaluation(target_name, exporters=reader._exporters, dataset=body.get("dataset"))
+        return run.to_dict()
+
     @router.get("/static/{filename}")
     def static_file(filename: str):
         fp = STATIC_DIR / filename
