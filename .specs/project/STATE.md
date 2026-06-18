@@ -67,3 +67,16 @@ Todas as tarefas T0–T17 entregues. Suite: **245 passed**. Resumo:
 ## Preferências
 - Usuário comunica em PT-BR. Modo caveman (full) ativo nas respostas.
 - Tarefas leves (validação, state update, handoff) rodam bem em modelos mais rápidos/baratos.
+
+## SDD criado (2026-06-17) — feature observability-platform (paridade LangFuse/LangSmith)
+`.specs/features/observability-platform/{spec,design,tasks}.md`. 6 fases, 24 tasks (T1–T24), 18 reqs.
+Pesquisa web feita (LangFuse/LangSmith/DeepEval/RAGAS). Decisões-chave:
+- **Gap crítico G1:** `eval/` já existe (datasets, judge, scorers, runner, CLI) mas **nenhum exporter
+  implementa `export_eval/query_evals/get_eval`** — resultados de eval não persistem. Fase 0 desbloqueia.
+- Fases: 0 persistência eval · 1 `tracecast.score()` (Score ligado a trace de produção) · 2 métricas
+  nomeadas (faithfulness/answer_relevancy/context_*/toxicity, reusa LLMJudge+SCORERS) · 3 compare A/B
+  de runs · 4 online eval por amostragem + `add_to_dataset` · 5 prompt management versionado.
+- Princípio: zero infra nova; tudo via contrato de exporter (AD-1) e dashboard existentes.
+- AD-10: paridade TS fora de escopo (tracecast-ts/src só tem dashboard/, SDK TS foi removida — C17).
+- Pendente decisão do usuário antes de Executar: ordem de entrega; `detoxify` opcional vs fallback;
+  buildar frontend agora vs só backend+endpoints.
