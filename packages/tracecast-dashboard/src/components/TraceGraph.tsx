@@ -20,6 +20,7 @@ interface GraphNode {
   type: string;
   status: string;
   model: string | null;
+  primary_model: string | null;
   tokens_in: number;
   tokens_out: number;
   total_tokens: number;
@@ -124,15 +125,18 @@ function layout(nodes: GraphNode[], layoutEdges: Array<[string, string]>): Recor
   return pos;
 }
 
-// LangChain internal chain names filtered out in simplified mode
+// LangChain/LangGraph internal scaffolding filtered in simplified mode.
+// llm spans are always hidden (both views) — their info surfaces on the parent via primary_model.
 const INTERNAL_CHAIN_NAMES = new Set([
   "LangGraph", "RunnableSequence", "Prompt", "ChatPromptTemplate",
   "call_model", "should_continue", "agent",
+  "tools",           // LangGraph tools-router wrapper, not the actual tool call
+  "route_by_intent", // router output node, internal LangGraph scaffolding
 ]);
 
 function simplifyNodes(nodes: GraphNode[]): GraphNode[] {
   return nodes.filter((n) => {
-    if (n.type === "llm" || n.type === "tool") return false;
+    if (n.type === "tool") return true;
     const shortName = n.name.split(":").pop() ?? n.name;
     return !INTERNAL_CHAIN_NAMES.has(shortName);
   });
@@ -142,20 +146,46 @@ function simplifyEdges(edges: GraphEdge[], visibleIds: Set<string>): GraphEdge[]
   return edges.filter((e) => visibleIds.has(e.from) && visibleIds.has(e.to));
 }
 
+/** Walk parent_span_id chain upward to find the nearest visible ancestor. */
+function nearestVisibleAncestor(
+  nodeId: string | null,
+  allNodeMap: Map<string, GraphNode>,
+  visibleIds: Set<string>,
+): string | null {
+  if (!nodeId) return null;
+  if (visibleIds.has(nodeId)) return nodeId;
+  const node = allNodeMap.get(nodeId);
+  if (!node || !node.parent_span_id) return null;
+  return nearestVisibleAncestor(node.parent_span_id, allNodeMap, visibleIds);
+}
+
 export function TraceGraph({ data, onSelect }: { data: GraphData; onSelect: (id: string) => void }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [simplified, setSimplified] = useState(false);
 
   const { nodes, edges } = useMemo(() => {
-    const activeNodes = simplified ? simplifyNodes(data.nodes) : data.nodes;
+    const allNodeMap = new Map(data.nodes.map((n) => [n.id, n]));
+    // llm spans always hidden — info shown via primary_model on parent card
+    const nonLlmNodes = data.nodes.filter((n) => n.type !== "llm");
+    const activeNodes = simplified ? simplifyNodes(nonLlmNodes) : nonLlmNodes;
     const visibleIds  = new Set(activeNodes.map((n) => n.id));
     const activeEdges = simplified ? simplifyEdges(data.edges, visibleIds) : data.edges;
 
     // Traversal flow comes from data.edges; nesting from parent_span_id.
     const traversalKeys = new Set(activeEdges.map((e) => `${e.from}->${e.to}`));
-    const parentEdges: Array<[string, string]> = activeNodes
-      .filter((n) => n.parent_span_id && visibleIds.has(n.parent_span_id) && !traversalKeys.has(`${n.parent_span_id}->${n.id}`))
-      .map((n) => [n.parent_span_id as string, n.id]);
+
+    // In simplified mode, bridge tool/agent nodes to their nearest visible ancestor
+    // so tool spans that lost their direct parent (chain:tools) still connect properly.
+    const parentEdges: Array<[string, string]> = [];
+    for (const n of activeNodes) {
+      if (!n.parent_span_id) continue;
+      const from = simplified
+        ? nearestVisibleAncestor(n.parent_span_id, allNodeMap, visibleIds)
+        : (visibleIds.has(n.parent_span_id) ? n.parent_span_id : null);
+      if (from && from !== n.id && !traversalKeys.has(`${from}->${n.id}`)) {
+        parentEdges.push([from, n.id]);
+      }
+    }
 
     const layoutEdges: Array<[string, string]> = [
       ...activeEdges.map((e) => [e.from, e.to] as [string, string]),
@@ -166,9 +196,10 @@ export function TraceGraph({ data, onSelect }: { data: GraphData; onSelect: (id:
     const rfNodes: Node[] = activeNodes.map((n) => {
       const color = colorFor(n);
       const metaParts = [
+        n.primary_model ? `via ${n.primary_model}` : null,
         n.total_tokens ? `${n.total_tokens.toLocaleString()} tok` : null,
-        fmtMs(n.latency_ms),
         n.cost_usd ? `$${n.cost_usd.toFixed(4)}` : null,
+        fmtMs(n.latency_ms),
       ].filter(Boolean);
       return {
         id: n.id,

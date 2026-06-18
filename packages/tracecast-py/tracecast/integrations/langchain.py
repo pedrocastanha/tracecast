@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 from langchain_core.callbacks.base import BaseCallbackHandler
-from ..core.tracer import Tracer
+from ..core.tracer import Tracer, _current_span
 from ..core.token_counter import _from_langchain_response
 from ..core.cost_calculator import calculate_cost
 from ..core.logger import TraceCastLogger
@@ -43,6 +43,18 @@ class TraceCastCallback(BaseCallbackHandler):
         self.tracer = tracer
         self._span_stack: dict[str, Span] = {}
         self._logger: Optional[TraceCastLogger] = getattr(tracer, "_tc_logger", None)
+        # Tracks ContextVar reset tokens so wrap_openai inside tool execution
+        # finds the correct parent span via Tracer.current_span().
+        self._span_ctx_tokens: dict[str, object] = {}
+
+    def _activate_span(self, run_id: str, span: Span) -> None:
+        token = _current_span.set(span)
+        self._span_ctx_tokens[run_id] = token
+
+    def _deactivate_span(self, run_id: str) -> None:
+        token = self._span_ctx_tokens.pop(run_id, None)
+        if token is not None:
+            _current_span.reset(token)
 
 
     def _trace_name(self) -> str:
@@ -185,7 +197,7 @@ class TraceCastCallback(BaseCallbackHandler):
     def on_tool_start(self, serialized, input_str, **kwargs):
         run_id = str(kwargs.get("run_id", uuid.uuid4()))
         name = serialized.get("name", "unknown_tool")
-        self._span_stack[run_id] = Span(
+        span = Span(
             span_id=run_id,
             parent_span_id=self._parent_id(kwargs),
             type=SpanType.TOOL,
@@ -193,11 +205,15 @@ class TraceCastCallback(BaseCallbackHandler):
             started_at=datetime.now(timezone.utc),
             input=_stringify(input_str),
         )
+        self._span_stack[run_id] = span
+        # Set _current_span so wrap_openai calls inside this tool find the correct parent.
+        self._activate_span(run_id, span)
         if self._logger:
             self._logger.tool_start(self._trace_name(), name=name, input_str=input_str)
 
     def on_tool_end(self, output, **kwargs):
         run_id = str(kwargs.get("run_id", ""))
+        self._deactivate_span(run_id)
         span = self._span_stack.pop(run_id, None)
         if not span:
             return
@@ -211,6 +227,7 @@ class TraceCastCallback(BaseCallbackHandler):
 
     def on_tool_error(self, error, **kwargs):
         run_id = str(kwargs.get("run_id", ""))
+        self._deactivate_span(run_id)
         span = self._span_stack.get(run_id)
         if self._logger and span:
             self._logger.tool_error(self._trace_name(), name=span.name, error=str(error))

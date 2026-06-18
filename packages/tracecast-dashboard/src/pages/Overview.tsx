@@ -3,7 +3,7 @@ import { useApi } from "../hooks/useApi";
 import { StatCard } from "../components/StatCard";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, BarChart, Bar, Legend,
+  ResponsiveContainer, BarChart, Bar, Legend, Cell,
 } from "recharts";
 
 const COLORS = ["#c8f751", "#5eead4", "#a78bfa", "#56e29a", "#fbbf24", "#fb7185", "#7dd3fc", "#f0abfc"];
@@ -116,19 +116,17 @@ export function Overview() {
         <div style={{ ...panel, flex: 1.4 }}>
           <h3 style={panelTitle}>Cost Over Time</h3>
           <ResponsiveContainer width="100%" height={250}>
-            <LineChart data={m.traces_over_time}>
-              <defs>
-                <linearGradient id="costLine" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={ACCENT} stopOpacity={0.9} />
-                  <stop offset="100%" stopColor={ACCENT} stopOpacity={0.3} />
-                </linearGradient>
-              </defs>
+            <BarChart data={m.traces_over_time}>
               <CartesianGrid stroke={GRID} strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="date" tick={{ fill: "var(--text-faint)", fontSize: 10 }} axisLine={{ stroke: GRID }} tickLine={false} />
-              <YAxis tick={{ fill: "var(--text-faint)", fontSize: 10 }} axisLine={false} tickLine={false} />
-              <Tooltip contentStyle={TOOLTIP} cursor={{ stroke: ACCENT, strokeOpacity: 0.3 }} />
-              <Line type="monotone" dataKey="cost_usd" stroke="url(#costLine)" strokeWidth={2.5} dot={false} activeDot={{ r: 4, fill: ACCENT }} />
-            </LineChart>
+              <YAxis tick={{ fill: "var(--text-faint)", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v.toFixed(3)}`} />
+              <Tooltip contentStyle={TOOLTIP} cursor={{ fill: "rgba(200,247,81,0.05)" }} formatter={(v: number) => [`$${v.toFixed(4)}`, "cost"]} />
+              <Bar dataKey="cost_usd" fill={ACCENT} radius={[4, 4, 0, 0]} maxBarSize={48}>
+                {(m.traces_over_time ?? []).map((_: unknown, i: number) => (
+                  <Cell key={i} fill={ACCENT} fillOpacity={0.85} />
+                ))}
+              </Bar>
+            </BarChart>
           </ResponsiveContainer>
         </div>
 

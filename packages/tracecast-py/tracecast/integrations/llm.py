@@ -1,3 +1,4 @@
+import inspect
 import uuid
 import json
 from datetime import datetime, timezone
@@ -82,6 +83,71 @@ def trace_llm_call(
     return response
 
 
+async def _async_trace_llm_call(
+    coro,
+    *,
+    provider: str,
+    model: str,
+    input_text: Optional[str] = None,
+):
+    """Async counterpart of trace_llm_call — properly awaits the API response."""
+    trace = Tracer.current()
+    if trace is None:
+        return await coro
+
+    span = Span(
+        span_id=str(uuid.uuid4()),
+        parent_span_id=getattr(Tracer.current_span(), "span_id", None),
+        type=SpanType.LLM,
+        name=f"llm:{model}",
+        model=model,
+        started_at=datetime.now(timezone.utc),
+        input=input_text,
+        metadata={},
+    )
+    tracer = _resolve_tracer()
+    logger = getattr(tracer, "_tc_logger", None)
+    if logger:
+        logger.llm_start(trace.name, model=model)
+
+    try:
+        response = await coro
+    except Exception as exc:
+        span.finished_at = datetime.now(timezone.utc)
+        span.mark_error(exc)
+        trace.spans.append(span)
+        if logger:
+            logger.llm_error(trace.name, model=model, error=str(exc))
+        raise
+
+    span.finished_at = datetime.now(timezone.utc)
+    tokens = extract_tokens(response, provider)
+    span.tokens_in = int(tokens["input"])
+    span.tokens_out = int(tokens["output"])
+    span.tokens_in_cached = int(tokens.get("cached", 0))
+    span.cost_usd = calculate_cost(
+        model,
+        span.tokens_in,
+        span.tokens_out,
+        tokens_in_cached=span.tokens_in_cached,
+    )
+    span.output = extract_content(response, provider)
+    trace.spans.append(span)
+
+    if logger:
+        latency_ms = (span.finished_at - span.started_at).total_seconds() * 1000
+        logger.llm_end(
+            trace.name,
+            model=model,
+            tokens_in=span.tokens_in,
+            tokens_out=span.tokens_out,
+            tokens_in_cached=span.tokens_in_cached,
+            cost_usd=span.cost_usd,
+            latency_ms=latency_ms,
+        )
+    return response
+
+
 def _resolve_tracer() -> Tracer:
     from ..decorators import _default_tracer
     return _default_tracer or Tracer()
@@ -135,8 +201,16 @@ class _NestedProxy:
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         model = kwargs.get("model", "unknown")
         input_text = extract_input_text(kwargs, self._provider)
+        raw = self._target(*args, **kwargs)
+        if inspect.isawaitable(raw):
+            return _async_trace_llm_call(
+                raw,
+                provider=self._provider,
+                model=model,
+                input_text=input_text,
+            )
         return trace_llm_call(
-            lambda: self._target(*args, **kwargs),
+            lambda: raw,
             provider=self._provider,
             model=model,
             input_text=input_text,

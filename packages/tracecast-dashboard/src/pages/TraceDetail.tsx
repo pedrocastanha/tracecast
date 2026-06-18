@@ -7,6 +7,51 @@ import { TraceGraph } from "../components/TraceGraph";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyObj = any;
 
+const IO_TRUNCATE = 600;
+
+function SpanIODisplay({ label, content }: { label: string; content: string }) {
+  const [expanded, setExpanded] = useState(false);
+
+  // Try to format as JSON for readability
+  let display = content;
+  try {
+    const parsed = JSON.parse(content);
+    display = JSON.stringify(parsed, null, 2);
+  } catch {
+    // keep as-is (Python repr, plain string, etc.)
+  }
+
+  const needsTrunc = display.length > IO_TRUNCATE;
+  const shown = expanded || !needsTrunc ? display : display.slice(0, IO_TRUNCATE) + "…";
+
+  return (
+    <div style={{ marginTop: 8, fontSize: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+        <strong style={{ color: "var(--accent)" }}>{label}:</strong>
+        {needsTrunc && (
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            style={{
+              fontSize: 10, padding: "2px 8px", borderRadius: 4,
+              border: "1px solid var(--border)", background: "var(--surface-2)",
+              color: "var(--text-muted)", cursor: "pointer",
+            }}
+          >
+            {expanded ? "show less" : `show raw (${display.length} chars)`}
+          </button>
+        )}
+      </div>
+      <pre style={{
+        background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 4,
+        padding: 8, whiteSpace: "pre-wrap", wordBreak: "break-word",
+        maxHeight: expanded ? 400 : 180, overflowY: "auto",
+      }}>
+        {shown}
+      </pre>
+    </div>
+  );
+}
+
 export function TraceDetail() {
   const { traceId } = useParams();
   const navigate = useNavigate();
@@ -81,18 +126,8 @@ export function TraceDetail() {
                 <span>Latency: {selectedSpan.latency_ms != null ? `${selectedSpan.latency_ms}ms` : "—"}</span>
               </div>
               {selectedSpan.error && <pre style={{ color: "var(--red)", fontSize: 12, marginTop: 8 }}>{selectedSpan.error}</pre>}
-              {selectedSpan.input && (
-                <div style={{ marginTop: 8, fontSize: 12 }}>
-                  <strong style={{ color: "var(--accent)" }}>Input:</strong>
-                  <pre style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 4, padding: 8, marginTop: 4, whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 200, overflowY: "auto" }}>{selectedSpan.input}</pre>
-                </div>
-              )}
-              {selectedSpan.output && (
-                <div style={{ marginTop: 8, fontSize: 12 }}>
-                  <strong style={{ color: "var(--accent)" }}>Output:</strong>
-                  <pre style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 4, padding: 8, marginTop: 4, whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 200, overflowY: "auto" }}>{selectedSpan.output}</pre>
-                </div>
-              )}
+              {selectedSpan.input && <SpanIODisplay label="Input" content={selectedSpan.input} />}
+              {selectedSpan.output && <SpanIODisplay label="Output" content={selectedSpan.output} />}
             </div>
           )}
         </>

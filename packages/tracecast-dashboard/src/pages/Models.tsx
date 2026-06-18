@@ -8,24 +8,23 @@ const GRID = "#222734";
 const TOOLTIP = { background: "#181c25", border: "1px solid #2d3340", borderRadius: 8, color: "#e7eaf2", fontSize: 12, fontFamily: "IBM Plex Mono, monospace" } as const;
 const td = { padding: "11px 14px", fontSize: 13, borderBottom: "1px solid var(--border)" } as const;
 
+interface ModelBreakdown {
+  calls: number;
+  total_tokens: number;
+  total_tokens_in: number;
+  total_tokens_out: number;
+  cost_usd: number;
+}
+
 export function Models() {
   const [period, setPeriod] = useState("7d");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: m, loading } = useApi<any>(`/metrics?period=${period}`, [period]);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: traces } = useApi<any>("/traces?page=1&page_size=200", []);
 
   if (loading || !m) return <div style={{ color: "var(--text-muted)" }}>Loading…</div>;
 
   const costData = Object.entries(m.cost_by_model || {}).map(([name, value]) => ({ name, cost: value as number }));
-
-  const modelStats: Record<string, { count: number; tokens: number }> = {};
-  for (const t of (traces?.traces ?? [])) {
-    if (!t.model) continue;
-    if (!modelStats[t.model]) modelStats[t.model] = { count: 0, tokens: 0 };
-    modelStats[t.model].count++;
-    modelStats[t.model].tokens += t.total_tokens ?? 0;
-  }
+  const modelBreakdown: Record<string, ModelBreakdown> = m.models_breakdown || {};
 
   return (
     <div>
@@ -40,7 +39,7 @@ export function Models() {
             <CartesianGrid stroke={GRID} strokeDasharray="3 3" vertical={false} />
             <XAxis dataKey="name" tick={{ fill: "var(--text-faint)", fontSize: 10 }} axisLine={{ stroke: GRID }} tickLine={false} />
             <YAxis tick={{ fill: "var(--text-faint)", fontSize: 10 }} axisLine={false} tickLine={false} />
-            <Tooltip contentStyle={TOOLTIP} cursor={{ fill: "rgba(200,247,81,0.05)" }} />
+            <Tooltip contentStyle={TOOLTIP} cursor={{ fill: "rgba(200,247,81,0.05)" }} formatter={(v: number) => [`$${v.toFixed(4)}`, "cost"]} />
             <Bar dataKey="cost" fill={ACCENT} radius={[4, 4, 0, 0]} maxBarSize={56} />
           </BarChart>
         </ResponsiveContainer>
@@ -50,21 +49,25 @@ export function Models() {
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
-              {["Model", "Traces", "Total Tokens"].map(h => (
+              {["Model", "LLM Calls", "Tokens In", "Tokens Out", "Cost"].map(h => (
                 <th key={h} style={{ textAlign: "left", padding: "12px 14px", borderBottom: "1px solid var(--border)" }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {Object.entries(modelStats).sort(([, a], [, b]) => b.count - a.count).map(([model, stats]) => (
-              <tr key={model}
-                onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
-                onMouseLeave={(e) => (e.currentTarget.style.background = "")}>
-                <td style={td}><code>{model}</code></td>
-                <td style={{ ...td, fontFamily: "var(--mono)" }}>{stats.count}</td>
-                <td style={{ ...td, fontFamily: "var(--mono)" }}>{stats.tokens.toLocaleString()}</td>
-              </tr>
-            ))}
+            {Object.entries(modelBreakdown)
+              .sort(([, a], [, b]) => b.total_tokens - a.total_tokens)
+              .map(([model, stats]) => (
+                <tr key={model}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "")}>
+                  <td style={td}><code>{model}</code></td>
+                  <td style={{ ...td, fontFamily: "var(--mono)" }}>{stats.calls.toLocaleString()}</td>
+                  <td style={{ ...td, fontFamily: "var(--mono)" }}>{stats.total_tokens_in.toLocaleString()}</td>
+                  <td style={{ ...td, fontFamily: "var(--mono)" }}>{stats.total_tokens_out.toLocaleString()}</td>
+                  <td style={{ ...td, fontFamily: "var(--mono)" }}>${stats.cost_usd.toFixed(4)}</td>
+                </tr>
+              ))}
           </tbody>
         </table>
       </div>

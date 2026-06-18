@@ -43,11 +43,20 @@ def compute_metrics(
 
     cost_by_model: dict[str, float] = defaultdict(float)
     cost_by_project: dict[str, float] = defaultdict(float)
+    models_breakdown: dict[str, dict] = defaultdict(lambda: {"calls": 0, "total_tokens": 0, "total_tokens_in": 0, "total_tokens_out": 0, "cost_usd": 0.0})
     for t in filtered:
-        if t.model:
-            cost_by_model[t.model] += t.cost_usd
         if t.project_id:
             cost_by_project[t.project_id] += t.cost_usd
+        for s in t.spans:
+            if s.type.value == "llm" and s.model:
+                cost_by_model[s.model] += s.cost_usd
+                models_breakdown[s.model]["calls"] += 1
+                models_breakdown[s.model]["total_tokens"] += s.total_tokens
+                models_breakdown[s.model]["total_tokens_in"] += s.tokens_in
+                models_breakdown[s.model]["total_tokens_out"] += s.tokens_out
+                models_breakdown[s.model]["cost_usd"] = round(
+                    models_breakdown[s.model]["cost_usd"] + s.cost_usd, 6
+                )
 
     traces_over_time = _group_by_day(filtered)
     tokens_by_model_over_time = _group_by_day_and_model(filtered)
@@ -63,6 +72,7 @@ def compute_metrics(
         "avg_latency_ms": round(avg_latency, 1),
         "cost_by_model": dict(cost_by_model),
         "cost_by_project": dict(cost_by_project),
+        "models_breakdown": {k: v for k, v in sorted(models_breakdown.items())},
         "traces_over_time": traces_over_time,
         "tokens_by_model_over_time": tokens_by_model_over_time,
     }
@@ -136,8 +146,53 @@ def _trace_summary(trace: Trace) -> dict:
 
 
 def build_graph(trace: Trace) -> dict:
+    # T5: exclude broken orphan LLM spans (pid=None + 0 tokens = wrap_openai async bug).
+    # Temporary until wrap_openai async fix lands in tracecast lib.
+    valid_spans = [
+        s for s in trace.spans
+        if not (
+            s.parent_span_id is None
+            and s.type.value == "llm"
+            and s.tokens_in == 0
+            and s.tokens_out == 0
+        )
+    ]
+
+    span_by_id = {s.span_id: s for s in valid_spans}
+    valid_ids = set(span_by_id.keys())
+
+    # Build parent→children map
+    children: dict[str, list] = defaultdict(list)
+    for s in valid_spans:
+        if s.parent_span_id and s.parent_span_id in span_by_id:
+            children[s.parent_span_id].append(s.span_id)
+
+    # Aggregate tokens + primary_model bottom-up (DFS, memoized).
+    # primary_model = model of the LLM descendant with most tokens (for parent card display).
+    agg_cache: dict[str, tuple] = {}
+
+    def _agg(sid: str) -> tuple:
+        if sid in agg_cache:
+            return agg_cache[sid]
+        s = span_by_id[sid]
+        ti, to_, cost = s.tokens_in, s.tokens_out, s.cost_usd
+        primary_model: str | None = s.model if s.type.value == "llm" else None
+        best_child_tok = 0
+        for child_id in children.get(sid, []):
+            ci, co, cc, cm = _agg(child_id)
+            ti += ci
+            to_ += co
+            cost += cc
+            child_tok = ci + co
+            if cm is not None and child_tok > best_child_tok:
+                primary_model = cm
+                best_child_tok = child_tok
+        agg_cache[sid] = (ti, to_, cost, primary_model)
+        return ti, to_, cost, primary_model
+
     nodes = []
-    for s in trace.spans:
+    for s in valid_spans:
+        ti, to_, cost, pm = _agg(s.span_id)
         nodes.append({
             "id": s.span_id,
             "parent_span_id": s.parent_span_id,
@@ -145,18 +200,26 @@ def build_graph(trace: Trace) -> dict:
             "type": s.type.value,
             "status": s.status.value if hasattr(s.status, "value") else s.status,
             "model": s.model,
-            "tokens_in": s.tokens_in,
-            "tokens_out": s.tokens_out,
-            "total_tokens": s.total_tokens,
-            "cost_usd": s.cost_usd,
+            "primary_model": pm,
+            "tokens_in": ti,
+            "tokens_out": to_,
+            "total_tokens": ti + to_,
+            "cost_usd": round(cost, 6),
             "latency_ms": s.latency_ms,
             "error": s.error,
         })
+
+    # Filter edges to only reference valid span ids (removes orphan edges)
+    valid_edges = [
+        e for e in trace.edges
+        if e.get("from") in valid_ids and e.get("to") in valid_ids
+    ]
+
     return {
         "trace_id": trace.trace_id,
         "name": trace.name,
         "nodes": nodes,
-        "edges": trace.edges,
+        "edges": valid_edges,
     }
 
 
@@ -327,15 +390,18 @@ def _group_by_day(traces: List[Trace]) -> list:
 
 
 def _group_by_day_and_model(traces: List[Trace]) -> list:
-    """Group by (date, model) for multi-series token/cost chart."""
+    """Group by (date, model) at span level for multi-series token/cost chart."""
     groups: dict[tuple, dict] = {}
     for t in traces:
         day = t.started_at.strftime("%Y-%m-%d")
-        model = t.model or "unknown"
-        key = (day, model)
-        if key not in groups:
-            groups[key] = {"date": day, "model": model, "tokens_in": 0, "tokens_out": 0, "cost_usd": 0.0}
-        groups[key]["tokens_in"] += t.total_tokens_in
-        groups[key]["tokens_out"] += t.total_tokens_out
-        groups[key]["cost_usd"] = round(groups[key]["cost_usd"] + t.cost_usd, 6)
+        for s in t.spans:
+            if s.type.value != "llm" or not s.model:
+                continue
+            model = s.model
+            key = (day, model)
+            if key not in groups:
+                groups[key] = {"date": day, "model": model, "tokens_in": 0, "tokens_out": 0, "cost_usd": 0.0}
+            groups[key]["tokens_in"] += s.tokens_in
+            groups[key]["tokens_out"] += s.tokens_out
+            groups[key]["cost_usd"] = round(groups[key]["cost_usd"] + s.cost_usd, 6)
     return sorted(groups.values(), key=lambda x: (x["date"], x["model"]))
