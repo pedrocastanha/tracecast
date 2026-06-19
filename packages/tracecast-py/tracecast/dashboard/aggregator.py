@@ -1,9 +1,16 @@
 """Pure functions for computing dashboard metrics from a list of traces. No I/O, no state."""
 
+import ast
+import json
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 from ..models.trace import Trace
+
+HIDDEN_CHAIN_NAMES = {
+    "LangGraph", "RunnableSequence", "Prompt", "ChatPromptTemplate",
+    "call_model", "should_continue", "agent", "tools",
+}
 
 
 def compute_metrics(
@@ -145,9 +152,64 @@ def _trace_summary(trace: Trace) -> dict:
     }
 
 
+def _short_name(name: str) -> str:
+    return name.split(":")[-1] if name else name
+
+
+def _parse_tool_params(raw: Optional[str]) -> Optional[dict]:
+    if not raw:
+        return None
+    for loader in (json.loads, ast.literal_eval):
+        try:
+            value = loader(raw)
+        except (ValueError, SyntaxError, TypeError):
+            continue
+        if isinstance(value, dict):
+            return value
+    return None
+
+
+def _is_curated(span) -> bool:
+    return bool(getattr(span, "metadata", None) and span.metadata.get("tc_display"))
+
+
+def _llm_call(c) -> dict:
+    return {
+        "model": c.model,
+        "tokens_in": c.tokens_in,
+        "tokens_out": c.tokens_out,
+        "cost_usd": round(c.cost_usd, 6),
+        "input": c.input,
+        "output": c.output,
+    }
+
+
+def _node_from_calls(s, calls: list) -> dict:
+    calls = sorted(calls, key=lambda c: c.started_at)
+    own_in = sum(c.tokens_in for c in calls)
+    own_out = sum(c.tokens_out for c in calls)
+    own_cost = sum(c.cost_usd for c in calls)
+    primary_model = max(calls, key=lambda c: c.total_tokens).model if calls else None
+    return {
+        "id": s.span_id,
+        "parent_span_id": s.parent_span_id,
+        "name": s.name,
+        "type": s.type.value,
+        "status": s.status.value if hasattr(s.status, "value") else s.status,
+        "model": s.model,
+        "primary_model": primary_model,
+        "own_tokens_in": own_in,
+        "own_tokens_out": own_out,
+        "own_total_tokens": own_in + own_out,
+        "own_cost_usd": round(own_cost, 6),
+        "llm_calls": [_llm_call(c) for c in calls],
+        "tool_params": _parse_tool_params(s.input) if s.type.value == "tool" else None,
+        "latency_ms": s.latency_ms,
+        "error": s.error,
+    }
+
+
 def build_graph(trace: Trace) -> dict:
-    # T5: exclude broken orphan LLM spans (pid=None + 0 tokens = wrap_openai async bug).
-    # Temporary until wrap_openai async fix lands in tracecast lib.
     valid_spans = [
         s for s in trace.spans
         if not (
@@ -158,41 +220,72 @@ def build_graph(trace: Trace) -> dict:
         )
     ]
 
+    curated = [s for s in valid_spans if _is_curated(s)]
+    if curated:
+        return _build_graph_curated(trace, valid_spans, curated)
+
     span_by_id = {s.span_id: s for s in valid_spans}
-    valid_ids = set(span_by_id.keys())
 
-    # Build parent→children map
-    children: dict[str, list] = defaultdict(list)
+    def _nearest_visible(sid: Optional[str]) -> Optional[str]:
+        seen: set = set()
+        current = span_by_id.get(sid) if sid else None
+        while current is not None and current.span_id not in seen:
+            seen.add(current.span_id)
+            current = span_by_id.get(current.parent_span_id)
+            if current is None:
+                return None
+            if current.type.value != "llm" and _short_name(current.name) not in HIDDEN_CHAIN_NAMES:
+                return current.span_id
+        return None
+
+    def _nearest_any(sid: Optional[str]) -> Optional[str]:
+        seen: set = set()
+        current = span_by_id.get(sid) if sid else None
+        while current is not None and current.span_id not in seen:
+            seen.add(current.span_id)
+            current = span_by_id.get(current.parent_span_id)
+            if current is None:
+                return None
+            if current.type.value != "llm":
+                return current.span_id
+        return None
+
+    attributed: dict[str, list] = defaultdict(list)
+    total_in = total_out = 0
+    total_cost = 0.0
     for s in valid_spans:
-        if s.parent_span_id and s.parent_span_id in span_by_id:
-            children[s.parent_span_id].append(s.span_id)
-
-    # Aggregate tokens + primary_model bottom-up (DFS, memoized).
-    # primary_model = model of the LLM descendant with most tokens (for parent card display).
-    agg_cache: dict[str, tuple] = {}
-
-    def _agg(sid: str) -> tuple:
-        if sid in agg_cache:
-            return agg_cache[sid]
-        s = span_by_id[sid]
-        ti, to_, cost = s.tokens_in, s.tokens_out, s.cost_usd
-        primary_model: str | None = s.model if s.type.value == "llm" else None
-        best_child_tok = 0
-        for child_id in children.get(sid, []):
-            ci, co, cc, cm = _agg(child_id)
-            ti += ci
-            to_ += co
-            cost += cc
-            child_tok = ci + co
-            if cm is not None and child_tok > best_child_tok:
-                primary_model = cm
-                best_child_tok = child_tok
-        agg_cache[sid] = (ti, to_, cost, primary_model)
-        return ti, to_, cost, primary_model
+        if s.type.value != "llm":
+            continue
+        total_in += s.tokens_in
+        total_out += s.tokens_out
+        total_cost += s.cost_usd
+        target = _nearest_visible(s.span_id) or _nearest_any(s.span_id)
+        if target is not None:
+            attributed[target].append(s)
 
     nodes = []
     for s in valid_spans:
-        ti, to_, cost, pm = _agg(s.span_id)
+        if s.type.value == "llm":
+            continue
+        calls = sorted(attributed.get(s.span_id, []), key=lambda c: c.started_at)
+        own_in = sum(c.tokens_in for c in calls)
+        own_out = sum(c.tokens_out for c in calls)
+        own_cost = sum(c.cost_usd for c in calls)
+        primary_model = None
+        if calls:
+            primary_model = max(calls, key=lambda c: c.total_tokens).model
+        llm_calls = [
+            {
+                "model": c.model,
+                "tokens_in": c.tokens_in,
+                "tokens_out": c.tokens_out,
+                "cost_usd": round(c.cost_usd, 6),
+                "input": c.input,
+                "output": c.output,
+            }
+            for c in calls
+        ]
+        tool_params = _parse_tool_params(s.input) if s.type.value == "tool" else None
         nodes.append({
             "id": s.span_id,
             "parent_span_id": s.parent_span_id,
@@ -200,19 +293,21 @@ def build_graph(trace: Trace) -> dict:
             "type": s.type.value,
             "status": s.status.value if hasattr(s.status, "value") else s.status,
             "model": s.model,
-            "primary_model": pm,
-            "tokens_in": ti,
-            "tokens_out": to_,
-            "total_tokens": ti + to_,
-            "cost_usd": round(cost, 6),
+            "primary_model": primary_model,
+            "own_tokens_in": own_in,
+            "own_tokens_out": own_out,
+            "own_total_tokens": own_in + own_out,
+            "own_cost_usd": round(own_cost, 6),
+            "llm_calls": llm_calls,
+            "tool_params": tool_params,
             "latency_ms": s.latency_ms,
             "error": s.error,
         })
 
-    # Filter edges to only reference valid span ids (removes orphan edges)
+    node_ids = {n["id"] for n in nodes}
     valid_edges = [
         e for e in trace.edges
-        if e.get("from") in valid_ids and e.get("to") in valid_ids
+        if e.get("from") in node_ids and e.get("to") in node_ids
     ]
 
     return {
@@ -220,6 +315,79 @@ def build_graph(trace: Trace) -> dict:
         "name": trace.name,
         "nodes": nodes,
         "edges": valid_edges,
+        "total_tokens_in": total_in,
+        "total_tokens_out": total_out,
+        "total_tokens": total_in + total_out,
+        "cost_usd": round(total_cost, 6),
+    }
+
+
+def _build_graph_curated(trace: Trace, valid_spans: list, curated: list) -> dict:
+    def _end(s):
+        return s.finished_at or s.started_at
+
+    def _containers(point, exclude=None):
+        return [
+            c for c in curated
+            if c.span_id != exclude and c.started_at <= point <= _end(c)
+        ]
+
+    attributed: dict[str, list] = defaultdict(list)
+    total_in = total_out = 0
+    total_cost = 0.0
+    for s in valid_spans:
+        if s.type.value != "llm":
+            continue
+        total_in += s.tokens_in
+        total_out += s.tokens_out
+        total_cost += s.cost_usd
+        containers = _containers(s.started_at)
+        if containers:
+            target = max(containers, key=lambda c: c.started_at)
+            attributed[target.span_id].append(s)
+
+    def _sort_key(c):
+        order = c.metadata.get("tc_order")
+        if order is not None:
+            return (0, order, c.started_at)
+        return (1, c.started_at, c.started_at)
+
+    ordered = sorted(curated, key=_sort_key)
+
+    def _parent_of(c):
+        containers = _containers(c.started_at, exclude=c.span_id)
+        if not containers:
+            return None
+        return max(containers, key=lambda x: x.started_at).span_id
+
+    parent_by_id = {c.span_id: _parent_of(c) for c in curated}
+
+    nodes = []
+    for c in ordered:
+        node = _node_from_calls(c, attributed.get(c.span_id, []))
+        node["parent_span_id"] = parent_by_id[c.span_id]
+        nodes.append(node)
+
+    children: dict = defaultdict(list)
+    for c in ordered:
+        children[parent_by_id[c.span_id]].append(c.span_id)
+
+    edges = []
+    for parent, kids in children.items():
+        for prev, cur in zip(kids, kids[1:]):
+            edges.append({"from": prev, "to": cur, "conditional": False})
+        if parent is not None and kids:
+            edges.append({"from": parent, "to": kids[0], "conditional": False})
+
+    return {
+        "trace_id": trace.trace_id,
+        "name": trace.name,
+        "nodes": nodes,
+        "edges": edges,
+        "total_tokens_in": total_in,
+        "total_tokens_out": total_out,
+        "total_tokens": total_in + total_out,
+        "cost_usd": round(total_cost, 6),
     }
 
 

@@ -85,11 +85,13 @@ def test_api_graph_endpoint():
     resp = client.get("/tc/api/traces/t1/graph")
     assert resp.status_code == 200
     g = resp.json()
-    assert {n["id"] for n in g["nodes"]} == {"t1-root", "t1-llm"}
+    assert {n["id"] for n in g["nodes"]} == {"t1-root"}
     assert g["edges"] == [] or all("from" in e for e in g["edges"])
-    llm_node = next(n for n in g["nodes"] if n["id"] == "t1-llm")
-    assert llm_node["parent_span_id"] == "t1-root"
-    assert llm_node["total_tokens"] == 15
+    root_node = next(n for n in g["nodes"] if n["id"] == "t1-root")
+    assert root_node["own_total_tokens"] == 15
+    assert root_node["primary_model"] == "gpt-4o"
+    assert len(root_node["llm_calls"]) == 1
+    assert g["total_tokens"] == 15
 
 
 def test_api_graph_404():

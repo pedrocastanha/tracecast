@@ -13,6 +13,15 @@ import ReactFlow, {
 import dagre from "dagre";
 import "reactflow/dist/style.css";
 
+interface LlmCall {
+  model: string | null;
+  tokens_in: number;
+  tokens_out: number;
+  cost_usd: number;
+  input: string | null;
+  output: string | null;
+}
+
 interface GraphNode {
   id: string;
   parent_span_id: string | null;
@@ -21,10 +30,12 @@ interface GraphNode {
   status: string;
   model: string | null;
   primary_model: string | null;
-  tokens_in: number;
-  tokens_out: number;
-  total_tokens: number;
-  cost_usd: number;
+  own_tokens_in: number;
+  own_tokens_out: number;
+  own_total_tokens: number;
+  own_cost_usd: number;
+  llm_calls: LlmCall[];
+  tool_params: Record<string, unknown> | null;
   latency_ms: number | null;
   error: string | null;
 }
@@ -59,7 +70,7 @@ function fmtMs(ms: number | null) {
 }
 
 // ── Custom node: type dot + name, then a dim metrics line ───────────────────
-type NodeData = { name: string; type: string; status: string; color: string; meta: string; selected: boolean };
+type NodeData = { name: string; type: string; status: string; color: string; meta: string; params: string | null; selected: boolean };
 
 function SpanNode({ data }: NodeProps<NodeData>) {
   return (
@@ -98,6 +109,14 @@ function SpanNode({ data }: NodeProps<NodeData>) {
       <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--text-faint)", letterSpacing: "-0.02em" }}>
         {data.meta || "—"}
       </div>
+      {data.params && (
+        <div
+          style={{ fontFamily: "var(--mono)", fontSize: 9.5, color: "var(--text-muted)", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+          title={data.params}
+        >
+          {data.params}
+        </div>
+      )}
       <Handle type="source" position={Position.Bottom} style={{ opacity: 0, width: 1, height: 1 }} />
     </div>
   );
@@ -130,9 +149,20 @@ function layout(nodes: GraphNode[], layoutEdges: Array<[string, string]>): Recor
 const INTERNAL_CHAIN_NAMES = new Set([
   "LangGraph", "RunnableSequence", "Prompt", "ChatPromptTemplate",
   "call_model", "should_continue", "agent",
-  "tools",           // LangGraph tools-router wrapper, not the actual tool call
-  "route_by_intent", // router output node, internal LangGraph scaffolding
+  "tools",
 ]);
+
+function formatParams(params: Record<string, unknown> | null): string | null {
+  if (!params) return null;
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(params)) {
+    if (v == null || v === "") continue;
+    const val = typeof v === "string" ? v : JSON.stringify(v);
+    parts.push(`${k}: ${val.length > 40 ? val.slice(0, 40) + "…" : val}`);
+    if (parts.length === 2) break;
+  }
+  return parts.length ? parts.join("  ·  ") : null;
+}
 
 function simplifyNodes(nodes: GraphNode[]): GraphNode[] {
   return nodes.filter((n) => {
@@ -161,7 +191,7 @@ function nearestVisibleAncestor(
 
 export function TraceGraph({ data, onSelect }: { data: GraphData; onSelect: (id: string) => void }) {
   const [selected, setSelected] = useState<string | null>(null);
-  const [simplified, setSimplified] = useState(false);
+  const [simplified, setSimplified] = useState(true);
 
   const { nodes, edges } = useMemo(() => {
     const allNodeMap = new Map(data.nodes.map((n) => [n.id, n]));
@@ -197,15 +227,15 @@ export function TraceGraph({ data, onSelect }: { data: GraphData; onSelect: (id:
       const color = colorFor(n);
       const metaParts = [
         n.primary_model ? `via ${n.primary_model}` : null,
-        n.total_tokens ? `${n.total_tokens.toLocaleString()} tok` : null,
-        n.cost_usd ? `$${n.cost_usd.toFixed(4)}` : null,
+        n.own_total_tokens ? `${n.own_total_tokens.toLocaleString()} tok` : null,
+        n.own_cost_usd ? `$${n.own_cost_usd.toFixed(4)}` : null,
         fmtMs(n.latency_ms),
       ].filter(Boolean);
       return {
         id: n.id,
         type: "span",
         position: pos[n.id] ?? { x: 0, y: 0 },
-        data: { name: n.name, type: n.type, status: n.status, color, meta: metaParts.join("  ·  "), selected: selected === n.id },
+        data: { name: n.name, type: n.type, status: n.status, color, meta: metaParts.join("  ·  "), params: formatParams(n.tool_params), selected: selected === n.id },
         draggable: true,
       };
     });

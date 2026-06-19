@@ -17,7 +17,18 @@ def _truncate(value: Any, limit: int = 2000) -> Optional[str]:
     return text if len(text) <= limit else text[:limit] + "..."
 
 
-def _new_span(name: str, span_type: SpanType, input_value: Any) -> Span:
+def _capture(args: Any, kwargs: Any) -> Any:
+    if kwargs and not args:
+        return kwargs
+    if args and not kwargs:
+        return args[0] if len(args) == 1 else args
+    return (args, kwargs)
+
+
+def _new_span(name: str, span_type: SpanType, input_value: Any, order: Optional[float] = None) -> Span:
+    metadata: dict = {"tc_display": True}
+    if order is not None:
+        metadata["tc_order"] = order
     return Span(
         span_id=str(uuid.uuid4()),
         parent_span_id=getattr(Tracer.current_span(), "span_id", None),
@@ -25,6 +36,7 @@ def _new_span(name: str, span_type: SpanType, input_value: Any) -> Span:
         name=name,
         started_at=datetime.now(timezone.utc),
         input=_truncate(input_value),
+        metadata=metadata,
     )
 
 
@@ -33,6 +45,7 @@ def trace_span(
     *,
     name: Optional[str] = None,
     type: SpanType = SpanType.TOOL,
+    order: Optional[float] = None,
     capture_io: bool = True,
 ):
     def decorator(inner_fn: Callable):
@@ -44,7 +57,7 @@ def trace_span(
                 trace = Tracer.current()
                 if trace is None:
                     return await inner_fn(*args, **kwargs)
-                span = _new_span(span_name, type, (args, kwargs) if capture_io else None)
+                span = _new_span(span_name, type, _capture(args, kwargs) if capture_io else None, order)
                 with activate_span(span):
                     try:
                         result = await inner_fn(*args, **kwargs)
@@ -66,7 +79,7 @@ def trace_span(
             trace = Tracer.current()
             if trace is None:
                 return inner_fn(*args, **kwargs)
-            span = _new_span(span_name, type, (args, kwargs) if capture_io else None)
+            span = _new_span(span_name, type, _capture(args, kwargs) if capture_io else None, order)
             with activate_span(span):
                 try:
                     result = inner_fn(*args, **kwargs)

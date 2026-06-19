@@ -23,6 +23,16 @@ def activate_span(span: Span):
         _current_span.reset(token)
 
 
+def push_span(span: Span):
+    """Set span as current without a context manager. Returns reset token."""
+    return _current_span.set(span)
+
+
+def pop_span(token) -> None:
+    """Restore previous current span using token from push_span."""
+    _current_span.reset(token)
+
+
 def bind_context(fn: Callable, *args: Any, **kwargs: Any) -> Callable[[], Any]:
     ctx = contextvars.copy_context()
 

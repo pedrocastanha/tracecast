@@ -52,6 +52,30 @@ function SpanIODisplay({ label, content }: { label: string; content: string }) {
   );
 }
 
+function LlmCallBlock({ call }: { call: AnyObj }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ border: "1px solid var(--border)", borderRadius: 6, marginBottom: 6, background: "var(--surface-2)" }}>
+      <div
+        onClick={() => setOpen((v) => !v)}
+        style={{ display: "flex", gap: 12, alignItems: "center", padding: "7px 10px", cursor: "pointer", fontSize: 12, fontFamily: "var(--mono)" }}
+      >
+        <span style={{ color: "var(--accent)", transform: open ? "rotate(90deg)" : "none", transition: "transform .15s" }}>▶</span>
+        <span style={{ fontWeight: 600 }}>{call.model ?? "—"}</span>
+        <span style={{ color: "var(--text-muted)" }}>{(call.tokens_in + call.tokens_out).toLocaleString()} tok</span>
+        <span style={{ color: "var(--text-muted)" }}>{call.tokens_in} in / {call.tokens_out} out</span>
+        {call.cost_usd > 0 && <span style={{ color: "var(--text-muted)" }}>${call.cost_usd.toFixed(4)}</span>}
+      </div>
+      {open && (
+        <div style={{ padding: "0 10px 10px 10px" }}>
+          {call.input && <SpanIODisplay label="Prompt" content={call.input} />}
+          {call.output && <SpanIODisplay label="Completion" content={call.output} />}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function TraceDetail() {
   const { traceId } = useParams();
   const navigate = useNavigate();
@@ -65,6 +89,7 @@ export function TraceDetail() {
   if (error || !t) return <div style={{ color: "var(--red)" }}>Error: {error ?? "Trace not found"}</div>;
 
   const selectedSpan = t.spans?.find((s: AnyObj) => s.span_id === selected) ?? null;
+  const selectedNode = graph?.nodes?.find((n: AnyObj) => n.id === selected) ?? null;
   const scores = scoresData?.scores ?? [];
 
   const kindColor = (k: string) =>
@@ -126,8 +151,21 @@ export function TraceDetail() {
                 <span>Latency: {selectedSpan.latency_ms != null ? `${selectedSpan.latency_ms}ms` : "—"}</span>
               </div>
               {selectedSpan.error && <pre style={{ color: "var(--red)", fontSize: 12, marginTop: 8 }}>{selectedSpan.error}</pre>}
+              {selectedNode?.tool_params && (
+                <SpanIODisplay label="Params" content={JSON.stringify(selectedNode.tool_params, null, 2)} />
+              )}
               {selectedSpan.input && <SpanIODisplay label="Input" content={selectedSpan.input} />}
               {selectedSpan.output && <SpanIODisplay label="Output" content={selectedSpan.output} />}
+              {selectedNode?.llm_calls?.length > 0 && (
+                <div style={{ marginTop: 14 }}>
+                  <div style={{ fontWeight: 600, fontSize: 12, color: "var(--accent)", marginBottom: 6 }}>
+                    LLM Calls ({selectedNode.llm_calls.length})
+                  </div>
+                  {selectedNode.llm_calls.map((c: AnyObj, i: number) => (
+                    <LlmCallBlock key={i} call={c} />
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </>
