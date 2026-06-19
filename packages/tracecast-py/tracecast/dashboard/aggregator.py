@@ -379,6 +379,67 @@ def _build_graph_curated(trace: Trace, valid_spans: list, curated: list) -> dict
         if parent is not None and kids:
             edges.append({"from": parent, "to": kids[0], "conditional": False})
 
+    # Add tool spans as nodes with dashed edges from their parent curated agent.
+    curated_ids = {c.span_id for c in curated}
+    span_by_id = {s.span_id: s for s in valid_spans}
+    tool_spans = sorted(
+        [s for s in valid_spans if s.type.value == "tool"],
+        key=lambda s: s.started_at,
+    )
+
+    tools_by_parent: dict = defaultdict(list)
+    for t in tool_spans:
+        # Walk up to nearest curated ancestor.
+        pid = t.parent_span_id
+        while pid and pid not in curated_ids:
+            ancestor = span_by_id.get(pid)
+            pid = ancestor.parent_span_id if ancestor else None
+        # Aggregate LLM calls whose parent_span_id is this tool.
+        tool_llms = sorted(
+            [s for s in valid_spans if s.type.value == "llm" and s.parent_span_id == t.span_id],
+            key=lambda s: s.started_at,
+        )
+        own_in = sum(c.tokens_in for c in tool_llms)
+        own_out = sum(c.tokens_out for c in tool_llms)
+        own_cost = sum(c.cost_usd for c in tool_llms)
+        primary_model = max(tool_llms, key=lambda c: c.total_tokens).model if tool_llms else None
+        nodes.append({
+            "id": t.span_id,
+            "parent_span_id": pid,
+            "name": t.name,
+            "type": "tool",
+            "status": t.status.value if hasattr(t.status, "value") else str(t.status),
+            "model": primary_model,
+            "primary_model": primary_model,
+            "own_tokens_in": own_in,
+            "own_tokens_out": own_out,
+            "own_total_tokens": own_in + own_out,
+            "own_cost_usd": round(own_cost, 6),
+            "llm_calls": [
+                {
+                    "model": c.model,
+                    "tokens_in": c.tokens_in,
+                    "tokens_out": c.tokens_out,
+                    "cost_usd": round(c.cost_usd, 6),
+                    "input": c.input,
+                    "output": c.output,
+                }
+                for c in tool_llms
+            ],
+            "tool_params": _parse_tool_params(t.input),
+            "latency_ms": t.latency_ms,
+            "error": t.error,
+        })
+        if pid:
+            tools_by_parent[pid].append(t.span_id)
+
+    # Dashed edges: agent → tool1 → tool2 → ... → agent (return)
+    for parent_id, tool_ids in tools_by_parent.items():
+        edges.append({"from": parent_id, "to": tool_ids[0], "conditional": True})
+        for prev, cur in zip(tool_ids, tool_ids[1:]):
+            edges.append({"from": prev, "to": cur, "conditional": True})
+        edges.append({"from": tool_ids[-1], "to": parent_id, "conditional": True})
+
     return {
         "trace_id": trace.trace_id,
         "name": trace.name,

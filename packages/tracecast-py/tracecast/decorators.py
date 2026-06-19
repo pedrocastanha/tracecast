@@ -58,18 +58,19 @@ def trace_span(
                 if trace is None:
                     return await inner_fn(*args, **kwargs)
                 span = _new_span(span_name, type, _capture(args, kwargs) if capture_io else None, order)
+                # Pre-insert before running so parent appears before children in trace.spans.
+                # This ensures a single-pass tree build in the frontend finds the parent first.
+                trace.spans.append(span)
                 with activate_span(span):
                     try:
                         result = await inner_fn(*args, **kwargs)
                     except Exception as exc:
                         span.finished_at = datetime.now(timezone.utc)
                         span.mark_error(exc)
-                        trace.spans.append(span)
                         raise
                 span.finished_at = datetime.now(timezone.utc)
                 if capture_io:
                     span.output = _truncate(result)
-                trace.spans.append(span)
                 return result
 
             return async_wrapper
@@ -80,18 +81,17 @@ def trace_span(
             if trace is None:
                 return inner_fn(*args, **kwargs)
             span = _new_span(span_name, type, _capture(args, kwargs) if capture_io else None, order)
+            trace.spans.append(span)
             with activate_span(span):
                 try:
                     result = inner_fn(*args, **kwargs)
                 except Exception as exc:
                     span.finished_at = datetime.now(timezone.utc)
                     span.mark_error(exc)
-                    trace.spans.append(span)
                     raise
             span.finished_at = datetime.now(timezone.utc)
             if capture_io:
                 span.output = _truncate(result)
-            trace.spans.append(span)
             return result
 
         return sync_wrapper
