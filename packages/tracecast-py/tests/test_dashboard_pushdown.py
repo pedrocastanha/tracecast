@@ -34,19 +34,21 @@ class FakeReadableExporter:
     def export(self, trace):
         self._docs.append(trace.to_dict())
 
-    def _match(self, d, project_id, from_dt, to_dt):
-        if project_id and d["project_id"] != project_id:
+    def _match(self, d, project_name, project_id, from_dt, to_dt):
+        if project_name and d.get("project_name") != project_name:
+            return False
+        if project_id and d.get("project_id") != project_id:
             return False
         return True
 
-    def query(self, *, project_id=None, user_id=None, session_id=None,
+    def query(self, *, project_name=None, project_id=None, user_id=None, session_id=None,
               from_dt=None, to_dt=None, limit=50, offset=0, sort_by="date", order="desc"):
-        rows = [d for d in self._docs if self._match(d, project_id, from_dt, to_dt)]
+        rows = [d for d in self._docs if self._match(d, project_name, project_id, from_dt, to_dt)]
         rows.sort(key=lambda d: d["started_at"], reverse=(order == "desc"))
         return rows[offset:offset + limit]
 
-    def count(self, *, project_id=None, user_id=None, session_id=None, from_dt=None, to_dt=None):
-        return len([d for d in self._docs if self._match(d, project_id, from_dt, to_dt)])
+    def count(self, *, project_name=None, project_id=None, user_id=None, session_id=None, from_dt=None, to_dt=None):
+        return len([d for d in self._docs if self._match(d, project_name, project_id, from_dt, to_dt)])
 
     def get(self, trace_id):
         return next((d for d in self._docs if d["trace_id"] == trace_id), None)

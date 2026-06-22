@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useApi } from "../hooks/useApi";
 import { PageHead } from "./Overview";
+import { CascadeFilter, type CascadeFilterValue } from "../components/CascadeFilter";
 
 interface TraceSummary {
   trace_id: string;
@@ -28,18 +29,18 @@ export function Traces() {
   const [page, setPage] = useState(1);
   const [sortBy, setSortBy] = useState("date");
   const [order, setOrder] = useState("desc");
-  const [projectId, setProjectId] = useState("");
-  const [userId, setUserId] = useState("");
+  const [filter, setFilter] = useState<CascadeFilterValue>({ projectName: "", projectId: "", userId: "" });
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
 
   const params = `?page=${page}&page_size=50&sort_by=${sortBy}&order=${order}` +
-    (projectId ? `&project_id=${encodeURIComponent(projectId)}` : "") +
-    (userId ? `&user_id=${encodeURIComponent(userId)}` : "") +
+    (filter.projectName ? `&project_name=${encodeURIComponent(filter.projectName)}` : "") +
+    (filter.projectId   ? `&project_id=${encodeURIComponent(filter.projectId)}`     : "") +
+    (filter.userId      ? `&user_id=${encodeURIComponent(filter.userId)}`            : "") +
     (fromDate ? `&from=${encodeURIComponent(fromDate + "T00:00:00")}` : "") +
     (toDate   ? `&to=${encodeURIComponent(toDate + "T23:59:59")}` : "");
 
-  const { data, loading } = useApi<{ traces: TraceSummary[]; total: number; page: number }>(`/traces${params}`, [page, sortBy, order, projectId, userId, fromDate, toDate]);
+  const { data, loading } = useApi<{ traces: TraceSummary[]; total: number; page: number }>(`/traces${params}`, [page, sortBy, order, filter.projectName, filter.projectId, filter.userId, fromDate, toDate]);
 
   const toggleSort = (col: string) => {
     if (sortBy === col) setOrder(order === "desc" ? "asc" : "desc");
@@ -54,8 +55,7 @@ export function Traces() {
       <PageHead title="Traces" kicker={data ? `// ${data.total} captured` : "// loading"} />
 
       <div style={{ display: "flex", gap: 8, marginBottom: 18, alignItems: "center", flexWrap: "wrap" }}>
-        <input placeholder="Project ID" value={projectId} onChange={(e) => { setProjectId(e.target.value); setPage(1); }} style={inputStyle} />
-        <input placeholder="User ID" value={userId} onChange={(e) => { setUserId(e.target.value); setPage(1); }} style={inputStyle} />
+        <CascadeFilter value={filter} onChange={(v) => { setFilter(v); setPage(1); }} showUserFilter />
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--text-faint)" }}>from</span>
           <input

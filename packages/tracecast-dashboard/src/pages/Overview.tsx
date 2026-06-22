@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { useApi } from "../hooks/useApi";
 import { StatCard } from "../components/StatCard";
+import { CascadeFilter, type CascadeFilterValue } from "../components/CascadeFilter";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, BarChart, Bar, Legend, Cell,
@@ -87,7 +88,11 @@ function pivotModelData(rows: TokensByModelRow[]): any[] {
 
 export function Overview() {
   const [period, setPeriod] = useState("7d");
-  const { data: m, loading, error } = useApi<Metrics>(`/metrics?period=${period}`, [period]);
+  const [filter, setFilter] = useState<CascadeFilterValue>({ projectName: "", projectId: "", userId: "" });
+  const metricsParams = `/metrics?period=${period}` +
+    (filter.projectName ? `&project_name=${encodeURIComponent(filter.projectName)}` : "") +
+    (filter.projectId   ? `&project_id=${encodeURIComponent(filter.projectId)}`     : "");
+  const { data: m, loading, error } = useApi<Metrics>(metricsParams, [period, filter.projectName, filter.projectId]);
 
   if (loading) return <div style={{ color: "var(--text-muted)" }}>Loading…</div>;
   if (error || !m) return <div style={{ color: "var(--red)" }}>Error: {error ?? "Failed to load metrics"}</div>;
@@ -99,7 +104,10 @@ export function Overview() {
   return (
     <div>
       <PageHead title="Overview" kicker="// live telemetry">
-        <PeriodSelect value={period} onChange={setPeriod} />
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <CascadeFilter value={filter} onChange={setFilter} />
+          <PeriodSelect value={period} onChange={setPeriod} />
+        </div>
       </PageHead>
 
       {/* 5 stat cards — cache hit rate removed (not universal) */}

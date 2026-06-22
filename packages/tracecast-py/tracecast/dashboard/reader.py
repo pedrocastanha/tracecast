@@ -47,6 +47,7 @@ class TraceReader:
         *,
         page: int = 1,
         page_size: int = 50,
+        project_name: Optional[str] = None,
         project_id: Optional[str] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -60,12 +61,12 @@ class TraceReader:
             return None
         offset = (max(page, 1) - 1) * page_size
         rows = exporter.query(
-            project_id=project_id, user_id=user_id, session_id=session_id,
+            project_name=project_name, project_id=project_id, user_id=user_id, session_id=session_id,
             from_dt=from_dt, to_dt=to_dt,
             limit=page_size, offset=offset, sort_by=sort_by, order=order,
         )
         total = exporter.count(
-            project_id=project_id, user_id=user_id, session_id=session_id,
+            project_name=project_name, project_id=project_id, user_id=user_id, session_id=session_id,
             from_dt=from_dt, to_dt=to_dt,
         )
         return [_hydrate_trace(r) for r in rows], total

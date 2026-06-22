@@ -1,20 +1,12 @@
 import uuid
 from datetime import datetime, timezone
-from typing import Optional, Union, Tuple
+from typing import Optional
 from langchain_core.callbacks.base import BaseCallbackHandler
-from ..core.tracer import Tracer, push_span, pop_span
+from ..core.tracer import Tracer
 from ..core.token_counter import _from_langchain_response
 from ..core.cost_calculator import calculate_cost
 from ..core.logger import TraceCastLogger
 from ..models.span import Span, SpanType
-
-
-def _join_prompts(prompts) -> Optional[str]:
-    if not prompts:
-        return None
-    if isinstance(prompts, (list, tuple)):
-        return "\n".join(str(p) for p in prompts)
-    return str(prompts)
 
 
 def _stringify(value) -> Optional[str]:
@@ -41,11 +33,8 @@ def _extract_generation_text(response) -> Optional[str]:
 class TraceCastCallback(BaseCallbackHandler):
     def __init__(self, tracer: Tracer):
         self.tracer = tracer
-        # Values: (span, ctx_token | None). Tool spans hold a token to restore
-        # _current_span after the tool finishes; LLM spans store None.
-        self._span_stack: dict[str, Tuple[Span, object]] = {}
+        self._span_stack: dict[str, Span] = {}
         self._logger: Optional[TraceCastLogger] = getattr(tracer, "_tc_logger", None)
-
 
     def _trace_name(self) -> str:
         trace = self.tracer.current()
@@ -53,14 +42,22 @@ class TraceCastCallback(BaseCallbackHandler):
 
     def _elapsed_ms(self, span: Span) -> Optional[float]:
         if span.finished_at and span.started_at:
-            delta = span.finished_at - span.started_at
-            return delta.total_seconds() * 1000
+            return (span.finished_at - span.started_at).total_seconds() * 1000
         return None
 
-
     def _parent_id(self, kwargs) -> Optional[str]:
-        span = Tracer.current_span()
-        return span.span_id if span else None
+        # If this callback is running inside a tracked tool/chain span
+        # (LangChain passes parent_run_id), use that span as parent.
+        parent_run_id = kwargs.get("parent_run_id")
+        if parent_run_id:
+            parent_span = self._span_stack.get(str(parent_run_id))
+            if parent_span is not None:
+                return parent_span.span_id
+        # Otherwise fall back to the agent span set by @trace_span via ContextVar.
+        ctx_span = Tracer.current_span()
+        return ctx_span.span_id if ctx_span else None
+
+    # ── LLM ─────────────────────────────────────────────────────────────────
 
     def on_llm_start(self, serialized, prompts, **kwargs):
         run_id = str(kwargs.get("run_id", uuid.uuid4()))
@@ -69,15 +66,15 @@ class TraceCastCallback(BaseCallbackHandler):
             or serialized.get("kwargs", {}).get("model")
             or serialized.get("name", "unknown")
         )
-        self._span_stack[run_id] = (Span(
+        self._span_stack[run_id] = Span(
             span_id=run_id,
             parent_span_id=self._parent_id(kwargs),
             type=SpanType.LLM,
             name=f"llm:{model}",
             model=model,
             started_at=datetime.now(timezone.utc),
-            input=self._join_prompts(prompts),
-        ), None)
+            input="\n\n".join(str(p) for p in (prompts or [])) or None,
+        )
         if self._logger:
             self._logger.llm_start(self._trace_name(), model=model)
 
@@ -88,7 +85,7 @@ class TraceCastCallback(BaseCallbackHandler):
             or serialized.get("kwargs", {}).get("model")
             or serialized.get("name", "unknown")
         )
-        self._span_stack[run_id] = (Span(
+        self._span_stack[run_id] = Span(
             span_id=run_id,
             parent_span_id=self._parent_id(kwargs),
             type=SpanType.LLM,
@@ -96,18 +93,9 @@ class TraceCastCallback(BaseCallbackHandler):
             model=model,
             started_at=datetime.now(timezone.utc),
             input=self._join_messages(messages),
-        ), None)
+        )
         if self._logger:
             self._logger.llm_start(self._trace_name(), model=model)
-
-    @staticmethod
-    def _join_prompts(prompts) -> Optional[str]:
-        try:
-            if not prompts:
-                return None
-            return "\n\n".join(str(p) for p in prompts)
-        except Exception:
-            return None
 
     @staticmethod
     def _join_messages(messages) -> Optional[str]:
@@ -136,12 +124,10 @@ class TraceCastCallback(BaseCallbackHandler):
 
     def on_llm_end(self, response, **kwargs):
         run_id = str(kwargs.get("run_id", ""))
-        entry = self._span_stack.pop(run_id, None)
-        if not entry:
+        span = self._span_stack.pop(run_id, None)
+        if not span:
             return
-        span, _ = entry
         span.finished_at = datetime.now(timezone.utc)
-        span.output = self._extract_output(response)
         usage = _from_langchain_response(response.llm_output or {})
         if usage["input"] == 0 and usage["output"] == 0:
             try:
@@ -179,16 +165,17 @@ class TraceCastCallback(BaseCallbackHandler):
 
     def on_llm_error(self, error, **kwargs):
         run_id = str(kwargs.get("run_id", ""))
-        entry = self._span_stack.get(run_id)
-        if self._logger and entry:
-            span, _ = entry
+        span = self._span_stack.get(run_id)
+        if self._logger and span:
             self._logger.llm_error(self._trace_name(), model=span.model or "unknown", error=str(error))
         self._close_span_with_error(run_id, error)
+
+    # ── Tool ─────────────────────────────────────────────────────────────────
 
     def on_tool_start(self, serialized, input_str, **kwargs):
         run_id = str(kwargs.get("run_id", uuid.uuid4()))
         name = serialized.get("name", "unknown_tool")
-        span = Span(
+        self._span_stack[run_id] = Span(
             span_id=run_id,
             parent_span_id=self._parent_id(kwargs),
             type=SpanType.TOOL,
@@ -196,20 +183,14 @@ class TraceCastCallback(BaseCallbackHandler):
             started_at=datetime.now(timezone.utc),
             input=_stringify(input_str),
         )
-        # Push tool span as current so inner LLM calls nest correctly under it.
-        token = push_span(span)
-        self._span_stack[run_id] = (span, token)
         if self._logger:
             self._logger.tool_start(self._trace_name(), name=name, input_str=input_str)
 
     def on_tool_end(self, output, **kwargs):
         run_id = str(kwargs.get("run_id", ""))
-        entry = self._span_stack.pop(run_id, None)
-        if not entry:
+        span = self._span_stack.pop(run_id, None)
+        if not span:
             return
-        span, token = entry
-        if token is not None:
-            pop_span(token)
         span.finished_at = datetime.now(timezone.utc)
         span.output = _stringify(output)
         trace = self.tracer.current()
@@ -220,30 +201,61 @@ class TraceCastCallback(BaseCallbackHandler):
 
     def on_tool_error(self, error, **kwargs):
         run_id = str(kwargs.get("run_id", ""))
-        entry = self._span_stack.get(run_id)
-        if self._logger and entry:
-            span, _ = entry
+        span = self._span_stack.get(run_id)
+        if self._logger and span:
             self._logger.tool_error(self._trace_name(), name=span.name, error=str(error))
         self._close_span_with_error(run_id, error)
 
+    # ── Chain ────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _chain_name(serialized: dict, kwarg_name: Optional[str] = None) -> str:
+        name = serialized.get("name")
+        if not name:
+            ids = serialized.get("id") or []
+            name = ids[-1] if ids else None
+        name = name or kwarg_name or "unknown"
+        return f"chain:{name}"
 
     def on_chain_start(self, serialized, inputs, **kwargs):
-        pass  # skip internal LangGraph/LangChain chains — @trace_span handles high-level nodes
+        run_id = str(kwargs.get("run_id", uuid.uuid4()))
+        name = self._chain_name(serialized or {}, kwarg_name=kwargs.get("name"))
+        lg_meta = kwargs.get("metadata") or {}
+        is_node = bool(lg_meta.get("langgraph_node"))
+        self._span_stack[run_id] = Span(
+            span_id=run_id,
+            parent_span_id=self._parent_id(kwargs),
+            type=SpanType.AGENT,
+            name=name,
+            started_at=datetime.now(timezone.utc),
+            metadata={"tc_display": True} if is_node else {},
+        )
+        if self._logger and not kwargs.get("parent_run_id"):
+            self._logger.chain_start(self._trace_name(), name=name)
 
     def on_chain_end(self, outputs, **kwargs):
-        pass
+        run_id = str(kwargs.get("run_id", ""))
+        span = self._span_stack.pop(run_id, None)
+        if not span:
+            return
+        span.finished_at = datetime.now(timezone.utc)
+        trace = self.tracer.current()
+        if trace:
+            trace.spans.append(span)
 
     def on_chain_error(self, error, **kwargs):
-        pass
+        run_id = str(kwargs.get("run_id", ""))
+        span = self._span_stack.get(run_id)
+        if self._logger and span:
+            self._logger.chain_error(self._trace_name(), name=span.name, error=str(error))
+        self._close_span_with_error(run_id, error)
 
+    # ── Helpers ──────────────────────────────────────────────────────────────
 
     def _close_span_with_error(self, run_id: str, error) -> None:
-        entry = self._span_stack.pop(run_id, None)
-        if not entry:
+        span = self._span_stack.pop(run_id, None)
+        if not span:
             return
-        span, token = entry
-        if token is not None:
-            pop_span(token)
         span.finished_at = datetime.now(timezone.utc)
         span.mark_error(error)
         trace = self.tracer.current()

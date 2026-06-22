@@ -19,6 +19,7 @@ def compute_metrics(
     period: str = "7d",
     from_dt: Optional[datetime] = None,
     to_dt: Optional[datetime] = None,
+    project_name: Optional[str] = None,
     project_id: Optional[str] = None,
 ) -> dict:
     if from_dt is None:
@@ -28,6 +29,8 @@ def compute_metrics(
         to_dt = now
 
     filtered = traces
+    if project_name:
+        filtered = [t for t in filtered if t.project_name == project_name]
     if project_id:
         filtered = [t for t in filtered if t.project_id == project_id]
     filtered = [
@@ -92,12 +95,15 @@ def paginate_traces(
     page_size: int = 50,
     sort_by: str = "date",
     order: str = "desc",
+    project_name: Optional[str] = None,
     project_id: Optional[str] = None,
     user_id: Optional[str] = None,
     from_dt: Optional[datetime] = None,
     to_dt: Optional[datetime] = None,
 ) -> dict:
     filtered = traces
+    if project_name:
+        filtered = [t for t in filtered if t.project_name == project_name]
     if project_id:
         filtered = [t for t in filtered if t.project_id == project_id]
     if user_id:
@@ -383,7 +389,7 @@ def _build_graph_curated(trace: Trace, valid_spans: list, curated: list) -> dict
     curated_ids = {c.span_id for c in curated}
     span_by_id = {s.span_id: s for s in valid_spans}
     tool_spans = sorted(
-        [s for s in valid_spans if s.type.value == "tool"],
+        [s for s in valid_spans if s.type.value == "tool" and s.span_id not in curated_ids],
         key=lambda s: s.started_at,
     )
 

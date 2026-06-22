@@ -14,8 +14,10 @@ def _filter_doc(doc: dict, include: Optional[Set[str]], exclude: Optional[Set[st
     return doc
 
 
-def _build_match(project_id, user_id, session_id, from_dt, to_dt) -> dict:
+def _build_match(project_id, user_id, session_id, from_dt, to_dt, project_name=None) -> dict:
     match: Dict[str, Any] = {}
+    if project_name:
+        match["project_name"] = project_name
     if project_id:
         match["project_id"] = project_id
     if user_id:
@@ -76,6 +78,7 @@ class MongoExporter(BaseExporter):
     def query(
         self,
         *,
+        project_name: Optional[str] = None,
         project_id: Optional[str] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -86,7 +89,7 @@ class MongoExporter(BaseExporter):
         sort_by: str = "date",
         order: str = "desc",
     ) -> List[dict]:
-        match = _build_match(project_id, user_id, session_id, from_dt, to_dt)
+        match = _build_match(project_id, user_id, session_id, from_dt, to_dt, project_name=project_name)
         direction = DESCENDING if order == "desc" else ASCENDING
         cursor = (
             self._collection.find(match)
@@ -102,13 +105,14 @@ class MongoExporter(BaseExporter):
     def count(
         self,
         *,
+        project_name: Optional[str] = None,
         project_id: Optional[str] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         from_dt: Optional[datetime] = None,
         to_dt: Optional[datetime] = None,
     ) -> int:
-        match = _build_match(project_id, user_id, session_id, from_dt, to_dt)
+        match = _build_match(project_id, user_id, session_id, from_dt, to_dt, project_name=project_name)
         return self._collection.count_documents(match)
 
     def export_eval(self, run) -> None:

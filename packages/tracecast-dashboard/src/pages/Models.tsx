@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useApi } from "../hooks/useApi";
 import { PageHead, PeriodSelect } from "./Overview";
+import { CascadeFilter, type CascadeFilterValue } from "../components/CascadeFilter";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
 const ACCENT = "#c8f751";
@@ -18,8 +19,12 @@ interface ModelBreakdown {
 
 export function Models() {
   const [period, setPeriod] = useState("7d");
+  const [filter, setFilter] = useState<CascadeFilterValue>({ projectName: "", projectId: "", userId: "" });
+  const metricsParams = `/metrics?period=${period}` +
+    (filter.projectName ? `&project_name=${encodeURIComponent(filter.projectName)}` : "") +
+    (filter.projectId   ? `&project_id=${encodeURIComponent(filter.projectId)}`     : "");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: m, loading } = useApi<any>(`/metrics?period=${period}`, [period]);
+  const { data: m, loading } = useApi<any>(metricsParams, [period, filter.projectName, filter.projectId]);
 
   if (loading || !m) return <div style={{ color: "var(--text-muted)" }}>Loading…</div>;
 
@@ -29,7 +34,10 @@ export function Models() {
   return (
     <div>
       <PageHead title="Models" kicker="// cost & usage">
-        <PeriodSelect value={period} onChange={setPeriod} />
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <CascadeFilter value={filter} onChange={setFilter} />
+          <PeriodSelect value={period} onChange={setPeriod} />
+        </div>
       </PageHead>
 
       <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: 20, marginBottom: 24 }}>

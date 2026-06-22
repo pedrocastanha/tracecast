@@ -63,6 +63,7 @@ def _make_router(reader: TraceReader, prefix: str = "") -> "APIRouter":
     def api_traces(
         page: int = Query(1, ge=1),
         page_size: int = Query(50, ge=1, le=200),
+        project_name: Optional[str] = Query(None),
         project_id: Optional[str] = Query(None),
         user_id: Optional[str] = Query(None),
         session_id: Optional[str] = Query(None),
@@ -75,7 +76,7 @@ def _make_router(reader: TraceReader, prefix: str = "") -> "APIRouter":
         to_parsed = _parse_iso(to_dt)
         pushed = reader.query_page(
             page=page, page_size=page_size,
-            project_id=project_id, user_id=user_id, session_id=session_id,
+            project_name=project_name, project_id=project_id, user_id=user_id, session_id=session_id,
             from_dt=from_parsed, to_dt=to_parsed, sort_by=sort_by, order=order,
         )
         if pushed is not None:
@@ -90,6 +91,7 @@ def _make_router(reader: TraceReader, prefix: str = "") -> "APIRouter":
             reader.get_traces(),
             page=page,
             page_size=page_size,
+            project_name=project_name,
             project_id=project_id,
             user_id=user_id,
             from_dt=from_parsed,
@@ -117,6 +119,7 @@ def _make_router(reader: TraceReader, prefix: str = "") -> "APIRouter":
         period: str = Query("7d"),
         from_dt: Optional[str] = Query(None, alias="from"),
         to_dt: Optional[str] = Query(None, alias="to"),
+        project_name: Optional[str] = Query(None),
         project_id: Optional[str] = Query(None),
     ):
         traces = reader.get_traces()
@@ -127,6 +130,7 @@ def _make_router(reader: TraceReader, prefix: str = "") -> "APIRouter":
             period=period,
             from_dt=from_parsed,
             to_dt=to_parsed,
+            project_name=project_name,
             project_id=project_id,
         )
 
