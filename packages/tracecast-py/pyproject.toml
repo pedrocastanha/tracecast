@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tracecast"
-version = "0.2.5"
+version = "0.2.6"
 description = "LLM observability SDK — framework-agnostic tracing for AI applications"
 readme = "README.md"
 license = { text = "MIT" }
