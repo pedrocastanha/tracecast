@@ -40,6 +40,15 @@ def _make_fake_openai():
     embeddings_mod.Embeddings = Embeddings
     resources.embeddings = embeddings_mod
 
+    class AsyncEmbeddings:
+        async def create(self, **kwargs):
+            response = MagicMock()
+            response.usage.prompt_tokens = 30
+            response.usage.total_tokens = 30
+            return response
+
+    embeddings_mod.AsyncEmbeddings = AsyncEmbeddings
+
     audio = types.ModuleType("openai.resources.audio")
     transcriptions_mod = types.ModuleType("openai.resources.audio.transcriptions")
 
@@ -53,6 +62,15 @@ def _make_fake_openai():
     transcriptions_mod.Transcriptions = Transcriptions
     audio.transcriptions = transcriptions_mod
 
+    class AsyncTranscriptions:
+        async def create(self, **kwargs):
+            response = MagicMock()
+            response.text = "transcribed text"
+            response.duration = 42.0
+            return response
+
+    transcriptions_mod.AsyncTranscriptions = AsyncTranscriptions
+
     speech_mod = types.ModuleType("openai.resources.audio.speech")
 
     class Speech:
@@ -62,6 +80,12 @@ def _make_fake_openai():
     speech_mod.Speech = Speech
     audio.speech = speech_mod
     resources.audio = audio
+
+    class AsyncSpeech:
+        async def create(self, **kwargs):
+            return MagicMock()
+
+    speech_mod.AsyncSpeech = AsyncSpeech
 
     sys.modules["openai"] = openai
     sys.modules["openai.resources"] = resources
@@ -278,6 +302,82 @@ class TestOpenAIInstrumentor:
         assert span["model"] == "gpt-4o-mini-tts"
         assert span["metadata"]["char_count"] == len("hello world")
         assert span["cost_usd"] > 0
+        inst.unpatch()
+
+    def test_async_embeddings_captures_span(self):
+        """Bots almost universally use AsyncOpenAI — embeddings must be captured
+        for the async client, not just the sync one."""
+        import asyncio
+        from tracecast.instrumentors.openai_inst import OpenAIInstrumentor
+        import openai.resources.embeddings as emb_mod
+
+        inst = OpenAIInstrumentor()
+        inst.patch()
+
+        exporter = DictExporter()
+        tracer = Tracer(exporters=[exporter])
+        client = emb_mod.AsyncEmbeddings()
+
+        async def run():
+            with tracer.trace("test-trace"):
+                await client.create(model="text-embedding-3-small", input="hello world")
+
+        asyncio.run(run())
+
+        assert len(exporter.traces) == 1
+        span = exporter.traces[0]["spans"][0]
+        assert span["type"] == "embedding"
+        assert span["tokens_in"] == 30
+        assert span["cost_usd"] > 0
+        inst.unpatch()
+
+    def test_async_transcription_captures_span(self):
+        import asyncio
+        from tracecast.instrumentors.openai_inst import OpenAIInstrumentor
+        import openai.resources.audio.transcriptions as tr_mod
+
+        inst = OpenAIInstrumentor()
+        inst.patch()
+
+        exporter = DictExporter()
+        tracer = Tracer(exporters=[exporter])
+        client = tr_mod.AsyncTranscriptions()
+
+        async def run():
+            with tracer.trace("test-trace"):
+                await client.create(model="whisper-1", file=b"fake-audio")
+
+        asyncio.run(run())
+
+        assert len(exporter.traces) == 1
+        span = exporter.traces[0]["spans"][0]
+        assert span["type"] == "audio"
+        assert span["metadata"]["duration_seconds"] == 42.0
+        assert span["cost_usd"] > 0
+        inst.unpatch()
+
+    def test_async_speech_captures_span(self):
+        import asyncio
+        from tracecast.instrumentors.openai_inst import OpenAIInstrumentor
+        import openai.resources.audio.speech as sp_mod
+
+        inst = OpenAIInstrumentor()
+        inst.patch()
+
+        exporter = DictExporter()
+        tracer = Tracer(exporters=[exporter])
+        client = sp_mod.AsyncSpeech()
+
+        async def run():
+            with tracer.trace("test-trace"):
+                await client.create(model="gpt-4o-mini-tts", input="hello world", voice="alloy")
+
+        asyncio.run(run())
+
+        assert len(exporter.traces) == 1
+        span = exporter.traces[0]["spans"][0]
+        assert span["type"] == "audio"
+        assert span["metadata"]["char_count"] == len("hello world")
         inst.unpatch()
 
     def test_patch_chat_false_leaves_chat_completions_untouched(self):

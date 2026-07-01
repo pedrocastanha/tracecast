@@ -44,8 +44,11 @@ class OpenAIInstrumentor(BaseInstrumentor):
         self._original_create: Optional[Any] = None
         self._original_acreate: Optional[Any] = None
         self._original_embeddings_create: Optional[Any] = None
+        self._original_async_embeddings_create: Optional[Any] = None
         self._original_transcriptions_create: Optional[Any] = None
+        self._original_async_transcriptions_create: Optional[Any] = None
         self._original_speech_create: Optional[Any] = None
+        self._original_async_speech_create: Optional[Any] = None
         self._patched: bool = False
 
     def patch(self, *, chat: bool = True, embeddings: bool = True, audio: bool = True) -> None:
@@ -103,6 +106,15 @@ class OpenAIInstrumentor(BaseInstrumentor):
 
         emb_mod.Embeddings.create = patched
 
+        if hasattr(emb_mod, "AsyncEmbeddings"):
+            self._original_async_embeddings_create = emb_mod.AsyncEmbeddings.create
+            _orig_async = self._original_async_embeddings_create
+
+            async def patched_async(client_self, *args, **kwargs):
+                return await self_ref._async_intercept_embeddings(client_self, args, kwargs, _orig_async)
+
+            emb_mod.AsyncEmbeddings.create = patched_async
+
     def _patch_audio(self) -> None:
         try:
             import openai.resources.audio.transcriptions as tr_mod
@@ -118,6 +130,15 @@ class OpenAIInstrumentor(BaseInstrumentor):
 
             tr_mod.Transcriptions.create = patched_tr
 
+            if hasattr(tr_mod, "AsyncTranscriptions"):
+                self._original_async_transcriptions_create = tr_mod.AsyncTranscriptions.create
+                _orig_async_tr = self._original_async_transcriptions_create
+
+                async def patched_async_tr(client_self, *args, **kwargs):
+                    return await self_ref._async_intercept_transcription(client_self, args, kwargs, _orig_async_tr)
+
+                tr_mod.AsyncTranscriptions.create = patched_async_tr
+
         try:
             import openai.resources.audio.speech as sp_mod
         except ImportError:
@@ -131,6 +152,15 @@ class OpenAIInstrumentor(BaseInstrumentor):
                 return self_ref._intercept_speech(client_self, args, kwargs, _orig_sp)
 
             sp_mod.Speech.create = patched_sp
+
+            if hasattr(sp_mod, "AsyncSpeech"):
+                self._original_async_speech_create = sp_mod.AsyncSpeech.create
+                _orig_async_sp = self._original_async_speech_create
+
+                async def patched_async_sp(client_self, *args, **kwargs):
+                    return await self_ref._async_intercept_speech(client_self, args, kwargs, _orig_async_sp)
+
+                sp_mod.AsyncSpeech.create = patched_async_sp
 
     def unpatch(self) -> None:
         if not self._patched:
@@ -147,16 +177,25 @@ class OpenAIInstrumentor(BaseInstrumentor):
             import openai.resources.embeddings as emb_mod
             emb_mod.Embeddings.create = self._original_embeddings_create
             self._original_embeddings_create = None
+            if self._original_async_embeddings_create is not None:
+                emb_mod.AsyncEmbeddings.create = self._original_async_embeddings_create
+                self._original_async_embeddings_create = None
 
         if self._original_transcriptions_create is not None:
             import openai.resources.audio.transcriptions as tr_mod
             tr_mod.Transcriptions.create = self._original_transcriptions_create
             self._original_transcriptions_create = None
+            if self._original_async_transcriptions_create is not None:
+                tr_mod.AsyncTranscriptions.create = self._original_async_transcriptions_create
+                self._original_async_transcriptions_create = None
 
         if self._original_speech_create is not None:
             import openai.resources.audio.speech as sp_mod
             sp_mod.Speech.create = self._original_speech_create
             self._original_speech_create = None
+            if self._original_async_speech_create is not None:
+                sp_mod.AsyncSpeech.create = self._original_async_speech_create
+                self._original_async_speech_create = None
 
         self._patched = False
 
@@ -355,6 +394,106 @@ class OpenAIInstrumentor(BaseInstrumentor):
         )
         try:
             response = original_fn(client_self, *args, **kwargs)
+        except Exception as exc:
+            span.finished_at = datetime.now(timezone.utc)
+            span.mark_error(exc)
+            trace.spans.append(span)
+            raise
+
+        span.finished_at = datetime.now(timezone.utc)
+        span.cost_usd = calculate_audio_cost(model, chars=char_count)
+        trace.spans.append(span)
+        return response
+
+    async def _async_intercept_embeddings(self, client_self: Any, args: tuple, kwargs: dict, original_fn: Any) -> Any:
+        from ..core.tracer import Tracer
+        trace = Tracer.current()
+        if trace is None or _handled_by_langchain():
+            return await original_fn(client_self, *args, **kwargs)
+
+        from ..models.span import Span, SpanType
+        from ..core.cost_calculator import calculate_cost
+
+        model = kwargs.get("model", "unknown")
+        span = Span(
+            span_id=str(uuid.uuid4()),
+            parent_span_id=active_parent_id(),
+            type=SpanType.EMBEDDING,
+            name=f"embedding:{model}",
+            model=model,
+            started_at=datetime.now(timezone.utc),
+        )
+        try:
+            response = await original_fn(client_self, *args, **kwargs)
+        except Exception as exc:
+            span.finished_at = datetime.now(timezone.utc)
+            span.mark_error(exc)
+            trace.spans.append(span)
+            raise
+
+        span.finished_at = datetime.now(timezone.utc)
+        usage = getattr(response, "usage", None)
+        span.tokens_in = int(getattr(usage, "prompt_tokens", 0) or 0) if usage else 0
+        span.cost_usd = calculate_cost(model, span.tokens_in, 0)
+        trace.spans.append(span)
+        return response
+
+    async def _async_intercept_transcription(self, client_self: Any, args: tuple, kwargs: dict, original_fn: Any) -> Any:
+        from ..core.tracer import Tracer
+        trace = Tracer.current()
+        if trace is None:
+            return await original_fn(client_self, *args, **kwargs)
+
+        from ..models.span import Span, SpanType
+        from ..core.cost_calculator import calculate_audio_cost
+
+        model = kwargs.get("model", "unknown")
+        span = Span(
+            span_id=str(uuid.uuid4()),
+            parent_span_id=active_parent_id(),
+            type=SpanType.AUDIO,
+            name=f"audio:{model}",
+            model=model,
+            started_at=datetime.now(timezone.utc),
+        )
+        try:
+            response = await original_fn(client_self, *args, **kwargs)
+        except Exception as exc:
+            span.finished_at = datetime.now(timezone.utc)
+            span.mark_error(exc)
+            trace.spans.append(span)
+            raise
+
+        span.finished_at = datetime.now(timezone.utc)
+        duration = getattr(response, "duration", None)
+        if duration is not None:
+            span.metadata["duration_seconds"] = duration
+            span.cost_usd = calculate_audio_cost(model, minutes=duration / 60)
+        trace.spans.append(span)
+        return response
+
+    async def _async_intercept_speech(self, client_self: Any, args: tuple, kwargs: dict, original_fn: Any) -> Any:
+        from ..core.tracer import Tracer
+        trace = Tracer.current()
+        if trace is None:
+            return await original_fn(client_self, *args, **kwargs)
+
+        from ..models.span import Span, SpanType
+        from ..core.cost_calculator import calculate_audio_cost
+
+        model = kwargs.get("model", "unknown")
+        char_count = len(kwargs.get("input", "") or "")
+        span = Span(
+            span_id=str(uuid.uuid4()),
+            parent_span_id=active_parent_id(),
+            type=SpanType.AUDIO,
+            name=f"audio:{model}",
+            model=model,
+            started_at=datetime.now(timezone.utc),
+            metadata={"char_count": char_count},
+        )
+        try:
+            response = await original_fn(client_self, *args, **kwargs)
         except Exception as exc:
             span.finished_at = datetime.now(timezone.utc)
             span.mark_error(exc)
