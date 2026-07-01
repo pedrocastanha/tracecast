@@ -5,9 +5,11 @@ from typing import Optional, Dict, Any
 
 
 class SpanType(str, Enum):
-    LLM   = "llm"
-    TOOL  = "tool"
-    AGENT = "agent"
+    LLM       = "llm"
+    TOOL      = "tool"
+    AGENT     = "agent"
+    EMBEDDING = "embedding"
+    AUDIO     = "audio"
 
 
 class SpanStatus(str, Enum):

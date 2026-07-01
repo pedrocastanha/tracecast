@@ -8,8 +8,13 @@ PRICE_TABLE: Dict[str, Dict[str, float]] = {
     "gpt-4-turbo":       {"input": 0.01000,  "output": 0.03000},
     "gpt-4.1":           {"input": 0.00200,  "output": 0.00800,  "cached": 0.000500},
     "gpt-4.1-mini":      {"input": 0.00040,  "output": 0.00160,  "cached": 0.000100},
+    "gpt-4.1-nano":      {"input": 0.00010,  "output": 0.00040,  "cached": 0.000025},
     "o3":                {"input": 0.00200,  "output": 0.00800,  "cached": 0.000500},
     "o4-mini":           {"input": 0.00110,  "output": 0.00440,  "cached": 0.000275},
+
+    "text-embedding-3-small": {"input": 0.00002, "output": 0.0},
+    "text-embedding-3-large": {"input": 0.00013, "output": 0.0},
+    "text-embedding-ada-002": {"input": 0.00010, "output": 0.0},
 
     "claude-opus-4-6":   {"input": 0.00500,  "output": 0.02500,  "cached": 0.000500},
     "claude-sonnet-4-6": {"input": 0.00300,  "output": 0.01500,  "cached": 0.000300},
@@ -62,3 +67,24 @@ def calculate_cost(
 def _prefix_match(model: str, prices: Dict) -> Optional[Dict]:
     provider = model.split("/")[0] + "/*"
     return prices.get(provider)
+
+
+# Audio isn't token-billed: transcription is per-minute of input audio, TTS is
+# per-character of input text. gpt-4o-mini-tts's rate is an approximation
+# (not published on OpenAI's current pricing page as of 2026-07) — verify
+# against an actual invoice before trusting it for reconciliation.
+AUDIO_PRICE_TABLE: Dict[str, Dict[str, float]] = {
+    "whisper-1":       {"unit": "minute", "price": 0.006},
+    "gpt-4o-mini-tts": {"unit": "char",   "price": 0.000015},
+    "tts-1":           {"unit": "char",   "price": 0.000015},
+    "tts-1-hd":        {"unit": "char",   "price": 0.00003},
+}
+
+
+def calculate_audio_cost(model: str, *, minutes: float = 0.0, chars: int = 0) -> float:
+    entry = AUDIO_PRICE_TABLE.get(model)
+    if not entry:
+        return 0.0
+    if entry["unit"] == "minute":
+        return minutes * entry["price"]
+    return chars * entry["price"]

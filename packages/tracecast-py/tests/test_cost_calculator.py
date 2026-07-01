@@ -1,5 +1,5 @@
 import pytest
-from tracecast.core.cost_calculator import calculate_cost, PRICE_TABLE
+from tracecast.core.cost_calculator import calculate_cost, calculate_audio_cost, PRICE_TABLE
 
 @pytest.mark.parametrize("model", [
     "gpt-4o", "gpt-4o-mini", "gpt-4-turbo",
@@ -151,3 +151,53 @@ def test_modelos_sem_suporte_a_cache_nao_tem_chave_cached():
     modelos_sem_cache = ["gpt-4-turbo", "gemini-2.5-flash", "llama-4-scout"]
     for model in modelos_sem_cache:
         assert "cached" not in PRICE_TABLE[model], f"{model} nao deveria ter preco de cache"
+
+
+# --- gpt-4.1-nano (bug: ausente da tabela, custo virava $0 silenciosamente) ---
+
+def test_gpt_4_1_nano_tem_preco():
+    assert "gpt-4.1-nano" in PRICE_TABLE
+
+
+def test_calcula_custo_gpt_4_1_nano():
+    # $0.10 / $0.40 por 1M tokens = 0.00010 / 0.00040 por 1k
+    cost = calculate_cost("gpt-4.1-nano", tokens_in=1000, tokens_out=1000)
+    assert abs(cost - (0.00010 + 0.00040)) < 1e-9
+
+
+def test_gpt_4_1_nano_cached_e_25_pct_do_input():
+    # mesmo padrao dos irmaos gpt-4.1 / gpt-4.1-mini: cached = 25% do input
+    entry = PRICE_TABLE["gpt-4.1-nano"]
+    assert abs(entry["cached"] - entry["input"] * 0.25) < 1e-9
+
+
+# --- embeddings (bug: nunca precificados, custo $0 mesmo se instrumentados) ---
+
+@pytest.mark.parametrize("model,expected_input", [
+    ("text-embedding-3-small", 0.00002),
+    ("text-embedding-3-large", 0.00013),
+    ("text-embedding-ada-002", 0.00010),
+])
+def test_calcula_custo_embeddings(model, expected_input):
+    cost = calculate_cost(model, tokens_in=1000, tokens_out=0)
+    assert abs(cost - expected_input) < 1e-9
+
+
+# --- audio (bug: whisper/tts nunca precificados nem instrumentados) ---
+
+def test_calculate_audio_cost_whisper_por_minuto():
+    cost = calculate_audio_cost("whisper-1", minutes=2.5)
+    assert abs(cost - (2.5 * 0.006)) < 1e-9
+
+
+def test_calculate_audio_cost_tts_por_caractere():
+    cost = calculate_audio_cost("gpt-4o-mini-tts", chars=1000)
+    assert cost > 0
+
+
+def test_calculate_audio_cost_modelo_desconhecido_retorna_zero():
+    assert calculate_audio_cost("modelo-inexistente", minutes=10) == 0.0
+
+
+def test_calculate_audio_cost_sem_uso_retorna_zero():
+    assert calculate_audio_cost("whisper-1") == 0.0
