@@ -71,6 +71,22 @@ class TraceReader:
         )
         return [_hydrate_trace(r) for r in rows], total
 
+    def get_traces_for_metrics(
+        self,
+        project_name: Optional[str] = None,
+        project_id: Optional[str] = None,
+    ) -> List[Trace]:
+        """Like get_traces() but bypasses max_traces for queryable exporters,
+        so dashboard aggregates reflect the full dataset instead of a capped window."""
+        exporter = self._readable()
+        if exporter is None:
+            return self.get_traces()
+        total = exporter.count(project_name=project_name, project_id=project_id)
+        if total <= 0:
+            return []
+        rows = exporter.query(project_name=project_name, project_id=project_id, limit=total, offset=0)
+        return [_hydrate_trace(r) for r in rows]
+
     def get_trace(self, trace_id: str) -> Optional[Trace]:
         exporter = self._readable()
         if exporter is not None and callable(getattr(exporter, "get", None)):
@@ -89,30 +105,30 @@ class TraceReader:
     ) -> list:
         from .aggregator import compute_sessions
         return compute_sessions(
-            self.get_traces(),
+            self.get_traces_for_metrics(),
             project_name=project_name,
             project_id=project_id,
             user_id=user_id,
         )
 
     def get_session(self, session_id: str) -> List[Trace]:
-        return [t for t in self.get_traces() if t.session_id == session_id]
+        return [t for t in self.get_traces_for_metrics() if t.session_id == session_id]
 
     def get_projects(self) -> list:
         from .aggregator import compute_projects
-        return compute_projects(self.get_traces())
+        return compute_projects(self.get_traces_for_metrics())
 
     def get_subprojects(self, project_name: str) -> list:
         from .aggregator import compute_projects_by_id
-        traces = [t for t in self.get_traces() if t.project_name == project_name]
+        traces = [t for t in self.get_traces_for_metrics() if t.project_name == project_name]
         return compute_projects_by_id(traces)
 
     def get_project(self, project_id: str) -> List[Trace]:
-        return [t for t in self.get_traces() if t.project_id == project_id]
+        return [t for t in self.get_traces_for_metrics() if t.project_id == project_id]
 
     def get_filter_options(self) -> dict:
         from .aggregator import compute_filter_options
-        return compute_filter_options(self.get_traces())
+        return compute_filter_options(self.get_traces_for_metrics())
 
     def _read_from(self, exporter) -> List[Trace]:
         name = type(exporter).__name__

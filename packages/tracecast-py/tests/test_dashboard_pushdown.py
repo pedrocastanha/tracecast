@@ -108,3 +108,49 @@ def test_index_injects_prefix():
     resp = client.get("/tc/")
     assert resp.status_code == 200
     assert 'window.__TC_PREFIX__ = "/tc"' in resp.text
+
+
+def test_get_traces_for_metrics_bypasses_max_traces_cap():
+    exporter = FakeReadableExporter([_trace(f"t{i}", "p1", i) for i in range(5)])
+    reader = TraceReader([exporter], max_traces=2)
+    assert len(reader.get_traces_for_metrics()) == 5
+
+
+def test_api_metrics_bypasses_max_traces_cap():
+    exporter = FakeReadableExporter([_trace(f"t{i}", "p1", i) for i in range(5)])
+    tracer = Tracer(exporters=[exporter])
+    app = FastAPI()
+    tracer.mount(app, prefix="/tc", max_traces=2)
+    client = TestClient(app)
+    resp = client.get("/tc/api/metrics", params={"from": "2020-01-01T00:00:00Z", "to": "2030-01-01T00:00:00Z"})
+    assert resp.status_code == 200
+    assert resp.json()["total_traces"] == 5
+
+
+def _trace_named_project(trace_id, project_name, offset_min=0):
+    base = datetime(2026, 6, 1, tzinfo=timezone.utc) + timedelta(minutes=offset_min)
+    t = Trace(trace_id=trace_id, name="req", started_at=base, project_name=project_name)
+    t.finished_at = base + timedelta(seconds=1)
+    t._finalize()
+    return t
+
+
+def test_get_filter_options_bypasses_max_traces_cap():
+    # "rare-project" is the oldest trace; a small cap sorted by recency would drop it.
+    exporter = FakeReadableExporter([
+        _trace_named_project("old", "rare-project", offset_min=0),
+        *[_trace_named_project(f"t{i}", "common-project", offset_min=10 + i) for i in range(5)],
+    ])
+    reader = TraceReader([exporter], max_traces=3)
+    opts = reader.get_filter_options()
+    assert "rare-project" in opts["project_names"]
+
+
+def test_get_projects_bypasses_max_traces_cap():
+    exporter = FakeReadableExporter([
+        _trace_named_project("old", "rare-project", offset_min=0),
+        *[_trace_named_project(f"t{i}", "common-project", offset_min=10 + i) for i in range(5)],
+    ])
+    reader = TraceReader([exporter], max_traces=3)
+    names = {p["project_name"] for p in reader.get_projects()}
+    assert "rare-project" in names

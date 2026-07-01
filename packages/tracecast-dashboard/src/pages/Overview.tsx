@@ -35,6 +35,7 @@ interface Metrics {
   avg_latency_ms: number;
   total_tokens_in: number;
   total_tokens_out: number;
+  total_tokens_in_cached: number;
   cost_by_model: Record<string, number>;
   cost_by_project: Record<string, number>;
   traces_over_time: Array<{ date: string; cost_usd: number; traces: number }>;
@@ -57,14 +58,16 @@ export function PageHead({ title, kicker, children }: { title: string; kicker?: 
   );
 }
 
-export function PeriodSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+export function PeriodSelect({ value, onChange, disabled }: { value: string; onChange: (v: string) => void; disabled?: boolean }) {
   return (
     <select
       value={value}
+      disabled={disabled}
       onChange={(e) => onChange(e.target.value)}
       style={{
         padding: "8px 14px", background: "var(--surface-2)", border: "1px solid var(--border)",
         color: "var(--text)", borderRadius: "var(--radius-sm)", fontSize: 13,
+        opacity: disabled ? 0.5 : 1,
       }}
     >
       <option value="1h">Last hour</option>
@@ -88,11 +91,19 @@ function pivotModelData(rows: TokensByModelRow[]): any[] {
 
 export function Overview() {
   const [period, setPeriod] = useState("7d");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
   const [filter, setFilter] = useState<CascadeFilterValue>({ projectName: "", projectId: "", userId: "" });
-  const metricsParams = `/metrics?period=${period}` +
+  const usingCustomRange = customFrom !== "" && customTo !== "";
+  const metricsParams = (usingCustomRange
+    ? `/metrics?from=${encodeURIComponent(customFrom + "T00:00:00Z")}&to=${encodeURIComponent(customTo + "T23:59:59Z")}`
+    : `/metrics?period=${period}`) +
     (filter.projectName ? `&project_name=${encodeURIComponent(filter.projectName)}` : "") +
     (filter.projectId   ? `&project_id=${encodeURIComponent(filter.projectId)}`     : "");
-  const { data: m, loading, error } = useApi<Metrics>(metricsParams, [period, filter.projectName, filter.projectId]);
+  const { data: m, loading, error } = useApi<Metrics>(
+    metricsParams,
+    [period, customFrom, customTo, filter.projectName, filter.projectId],
+  );
 
   if (loading) return <div style={{ color: "var(--text-muted)" }}>Loading…</div>;
   if (error || !m) return <div style={{ color: "var(--red)" }}>Error: {error ?? "Failed to load metrics"}</div>;
@@ -106,17 +117,35 @@ export function Overview() {
       <PageHead title="Overview" kicker="// live telemetry">
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <CascadeFilter value={filter} onChange={setFilter} />
-          <PeriodSelect value={period} onChange={setPeriod} />
+          <input
+            type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)}
+            style={{ padding: "8px 10px", background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: "var(--radius-sm)", fontSize: 13 }}
+          />
+          <span style={{ color: "var(--text-faint)", fontSize: 12 }}>—</span>
+          <input
+            type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)}
+            style={{ padding: "8px 10px", background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: "var(--radius-sm)", fontSize: 13 }}
+          />
+          {usingCustomRange && (
+            <button
+              onClick={() => { setCustomFrom(""); setCustomTo(""); }}
+              style={{ padding: "8px 12px", background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text-muted)", borderRadius: "var(--radius-sm)", fontSize: 13, cursor: "pointer" }}
+            >
+              Clear
+            </button>
+          )}
+          <PeriodSelect value={period} onChange={setPeriod} disabled={usingCustomRange} />
         </div>
       </PageHead>
 
-      {/* 5 stat cards — cache hit rate removed (not universal) */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 14, marginBottom: 24 }}>
+      {/* 6 stat cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 14, marginBottom: 24 }}>
         <StatCard label="Total Traces" value={m.total_traces.toLocaleString()} accent="#c8f751" />
         <StatCard label="Total Cost" value={fmt$(m.total_cost_usd)} accent="#5eead4" />
         <StatCard label="Avg Latency" value={fmtMs(m.avg_latency_ms)} accent="#a78bfa" />
         <StatCard label="Tokens In" value={m.total_tokens_in.toLocaleString()} accent="#fbbf24" />
         <StatCard label="Tokens Out" value={m.total_tokens_out.toLocaleString()} accent="#7dd3fc" />
+        <StatCard label="Tokens Cached" value={m.total_tokens_in_cached.toLocaleString()} accent="#56e29a" />
       </div>
 
       <div style={{ display: "flex", gap: 16, marginBottom: 16 }}>

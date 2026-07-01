@@ -122,7 +122,7 @@ def _make_router(reader: TraceReader, prefix: str = "") -> "APIRouter":
         project_name: Optional[str] = Query(None),
         project_id: Optional[str] = Query(None),
     ):
-        traces = reader.get_traces()
+        traces = reader.get_traces_for_metrics(project_name=project_name, project_id=project_id)
         from_parsed = _parse_iso(from_dt)
         to_parsed = _parse_iso(to_dt)
         return compute_metrics(

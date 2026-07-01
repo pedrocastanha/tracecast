@@ -7,6 +7,7 @@ import { CascadeFilter, type CascadeFilterValue } from "../components/CascadeFil
 interface TraceSummary {
   trace_id: string;
   name: string;
+  project_name: string | null;
   started_at: string;
   latency_ms: number | null;
   total_tokens_in: number;
@@ -105,7 +106,7 @@ export function Traces() {
                       style={{ cursor: "pointer" }}
                       onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
                       onMouseLeave={(e) => (e.currentTarget.style.background = "")}>
-                      <td style={{ ...td, fontWeight: 500 }}>{t.name}</td>
+                      <td style={{ ...td, fontWeight: 500 }}>{t.project_name ? `[${t.project_name}]-${t.name}` : t.name}</td>
                       <td style={mono}>{new Date(t.started_at).toLocaleString()}</td>
                       <td style={mono}>{t.latency_ms != null ? (t.latency_ms < 1000 ? `${t.latency_ms}ms` : `${(t.latency_ms / 1000).toFixed(2)}s`) : "—"}</td>
                       <td style={mono}>{t.total_tokens_in.toLocaleString()} / {t.total_tokens_out.toLocaleString()}</td>
