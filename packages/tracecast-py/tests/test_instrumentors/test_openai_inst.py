@@ -326,3 +326,67 @@ class TestOpenAIInstrumentor:
         inst.patch()
         assert chat_mod.Completions.create is not original_create
         inst.unpatch()
+
+
+class TestHandledByLangchain:
+    """_handled_by_langchain() decides whether the raw-client patch should skip a
+    call because LangChain's own callback mechanism will independently capture it.
+    It must distinguish "LangChain's ChatOpenAI is the direct caller" (defer) from
+    "some LangChain orchestration exists upstream but app code is the direct caller"
+    (capture) — a raw openai call made inside a @tool function or a langgraph node
+    is NOT seen by LangChain's callback system and must not be silently dropped."""
+
+    def setup_method(self):
+        from tracecast.instrument import _registry, _reset
+        _reset()
+
+        class FakePatchedLangchainInstrumentor:
+            def is_patched(self):
+                return True
+
+        _registry["langchain"] = FakePatchedLangchainInstrumentor()
+
+    def teardown_method(self):
+        from tracecast.instrument import _reset
+        _reset()
+
+    @staticmethod
+    def _mid1():
+        """Stands in for the `_intercept` frame (the direct caller of _handled_by_langchain)."""
+        from tracecast.instrumentors.openai_inst import _handled_by_langchain
+        return _handled_by_langchain()
+
+    @staticmethod
+    def _mid2():
+        """Stands in for the `patched_create` frame: _handled_by_langchain's
+        `sys._getframe(2)` lands here, so `.f_back` must reach the real caller."""
+        return TestHandledByLangchain._mid1()
+
+    @staticmethod
+    def _call_from_module(module_name, fn):
+        import types
+        mod = types.ModuleType(module_name)
+        mod.__dict__["_target"] = fn
+        exec("def _caller():\n    return _target()\n", mod.__dict__)
+        return mod.__dict__["_caller"]()
+
+    def test_true_when_direct_caller_is_langchain_openai_wrapper(self):
+        result = self._call_from_module("langchain_openai.chat_models.base", self._mid2)
+        assert result is True
+
+    def test_false_when_caller_is_langchain_orchestration_not_llm_wrapper(self):
+        """The bug: a raw openai call inside a @tool function (stack has a
+        langchain_core.tools frame above it, but the DIRECT caller is app code)
+        must be captured, not silently dropped."""
+        result = self._call_from_module("langchain_core.tools", self._mid2)
+        assert result is False
+
+    def test_false_when_caller_is_langgraph_node(self):
+        result = self._call_from_module("langgraph.utils.runnable", self._mid2)
+        assert result is False
+
+    def test_false_when_langchain_instrumentor_not_patched(self):
+        from tracecast.instrument import _registry
+        _registry.clear()
+        result = self._call_from_module("langchain_openai.chat_models.base", self._mid2)
+        assert result is False

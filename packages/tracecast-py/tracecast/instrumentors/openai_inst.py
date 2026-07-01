@@ -5,6 +5,22 @@ from typing import Any, Optional
 from .base import BaseInstrumentor, active_parent_id
 
 
+# Only LangChain's own LLM-wrapper packages directly invoke the underlying
+# provider client on their own behalf, triggering LangChain's callback system
+# (which TraceCastCallback hooks into via LangChainInstrumentor). Orchestration
+# packages (langchain_core.tools, langchain.agents, langgraph.*) run *above*
+# a raw client call made by application code (e.g. a @tool function) — that
+# call is invisible to LangChain's callbacks, so it must NOT be deferred here,
+# or it silently disappears from tracing entirely.
+_LANGCHAIN_LLM_WRAPPER_PREFIXES = (
+    "langchain_openai.",
+    "langchain_community.chat_models",
+    "langchain_community.llms",
+    "langchain.chat_models",
+    "langchain.llms",
+)
+
+
 def _handled_by_langchain() -> bool:
     from ..instrument import _registry
 
@@ -15,7 +31,7 @@ def _handled_by_langchain() -> bool:
     depth = 0
     while frame is not None and depth < 60:
         module = frame.f_globals.get("__name__", "")
-        if module.startswith("langchain"):
+        if module.startswith(_LANGCHAIN_LLM_WRAPPER_PREFIXES):
             return True
         frame = frame.f_back
         depth += 1
