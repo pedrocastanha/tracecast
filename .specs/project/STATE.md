@@ -100,3 +100,47 @@ Suite: **351 passed** (era 300 no baseline desta sessão). Commits atômicos por
   T18 doc README do OnlineEval. Frontend em `dashboard/static/` (build React). Backend/endpoints prontos.
 - Novos métodos de exporter são opcionais no BaseExporter (default no-op/[]) → degradação graciosa.
   Idempotência: Mongo upsert, Postgres ON CONFLICT, file/dict dedup por chave lógica.
+
+## Correção de STATE stale (2026-06-30)
+A entrada acima ("PENDENTE (UI)") estava desatualizada: `git log -- packages/tracecast-dashboard`
+mostra commit `d10ffbf` ("observability platform UI — scores, run compare, prompts (#3)") já
+entregue depois de 2026-06-17. **M3 do `ROADMAP.md` está completo**, não pendente. Lição: sempre
+checar `git log` do diretório antes de confiar em status registrado em `STATE.md` — memória pode
+ficar stale entre sessões.
+
+## SDD/roadmap criado (2026-06-30) — pesquisa Langfuse/LangSmith + 4 novas features
+`.specs/research/langfuse-comparison.md` (pesquisa completa via WebSearch/WebFetch + leitura do
+código fonte do `langfuse-python` CallbackHandler + introspecção local de `langgraph`/
+`langchain_core`), `.specs/project/ROADMAP.md` (novo, M1-M7), 4 feature dirs em
+`.specs/features/`. Decisões-chave:
+
+- **Achado central:** granularidade de span em LangGraph não é resolvida nem pelo Langfuse (só
+  esconde via tag `langsmith:hidden`, ainda grava tudo) nem pelo TraceCast hoje (bug: `tc_display`
+  usa `bool(langgraph_node)` em vez de `name == langgraph_node`, super-marca chains aninhadas
+  dentro de um node). Confirmado empiricamente rodando `langgraph==1.0.1` local com callback de
+  debug — ver `.specs/features/langgraph-native-spans/design.md` seção "Evidência empírica".
+- **`langgraph-native-spans`** (spec+design+tasks completos, pronto para Execute): classifica
+  span em tempo de captura (não só leitura), descarta canalização (`RunnableSequence`/
+  `ChannelWrite`/branch runnables) com reparenting correto, usa `compiled_graph.get_graph()` para
+  topologia real (edges + label de branch condicional) em vez de heurística de tempo. Resolve C2
+  do `CONCERNS.md`. Default `span_capture="curated"` é breaking change de comportamento
+  (documentar no CHANGELOG), modo `"all"` preserva paridade para quem depender.
+- **`dynamic-guardrails`** (spec only): guardrail vira span de primeira classe
+  (`allow`/`block`/`flag`), estático (regex/PII) ou dinâmico (reusa `eval.judge.LLMJudge` — zero
+  motor de judge novo). Fail-open default em erro de judge. Sem dependência obrigatória nova
+  (LLM Guard/Presidio/NeMo Guardrails ficam opcionais).
+- **`dashboard-ux-refresh`** (spec only): tokens de design + estados padronizados (P1), P50/P95/
+  P99 de latência (gap confirmado vs LangSmith) + `cmd+k` (P2), anotação lite via `Score` já
+  existente sem fila multiusuário (P3).
+- **`performance-optimization`** (spec only): C10 do `CONCERNS.md` confirmado ainda parcialmente
+  aberto — `tracer.py:101` chama `_export()` síncrono dentro do `finally` do `with tracer.trace()`,
+  bloqueando o caminho de retorno na I/O do exporter. P1 = `async_export` com worker dedicado
+  (não thread-per-trace como `atrace()` faz hoje). P2 = batching opcional + `sample_rate` opt-in
+  que **nunca** dropa trace com erro (aprendizado direto do ponto de dor do LangSmith: sampling
+  forçado por custo já causou perda de trace relevante para usuários deles).
+- Addendum LangSmith: gaps deles (cobrança por trace, sampling forçado, OTel só parcial,
+  instrumentação fraca fora do LangChain) já são coberto pelo roadmap existente ou já são pontos
+  fortes do TraceCast (instrumentors standalone para OpenAI/Anthropic/Gemini/CrewAI/LlamaIndex já
+  existem, sem depender de LangChain — vale destacar em marketing, não é trabalho novo).
+- Todas as 4 features estão em `.specs/features/`; só `langgraph-native-spans` tem design+tasks
+  prontos. As outras 3 aguardam o usuário priorizar antes de aprofundar em Design.
