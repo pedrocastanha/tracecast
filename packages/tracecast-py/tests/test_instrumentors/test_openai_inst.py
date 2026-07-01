@@ -279,3 +279,50 @@ class TestOpenAIInstrumentor:
         assert span["metadata"]["char_count"] == len("hello world")
         assert span["cost_usd"] > 0
         inst.unpatch()
+
+    def test_patch_chat_false_leaves_chat_completions_untouched(self):
+        """Bots that already trace chat completions via a manual LangChain
+        callback must be able to add embeddings/audio coverage without also
+        re-patching chat.completions.create (which would double-count)."""
+        from tracecast.instrumentors.openai_inst import OpenAIInstrumentor
+        import openai.resources.chat.completions as chat_mod
+        import openai.resources.embeddings as emb_mod
+
+        original_create = chat_mod.Completions.create
+        inst = OpenAIInstrumentor()
+        inst.patch(chat=False, embeddings=True, audio=False)
+
+        assert chat_mod.Completions.create is original_create
+        assert emb_mod.Embeddings.create is not None
+        inst.unpatch()
+        assert chat_mod.Completions.create is original_create
+
+    def test_patch_embeddings_only_still_captures_span(self):
+        from tracecast.instrumentors.openai_inst import OpenAIInstrumentor
+        import openai.resources.embeddings as emb_mod
+
+        inst = OpenAIInstrumentor()
+        inst.patch(chat=False, embeddings=True, audio=False)
+
+        exporter = DictExporter()
+        tracer = Tracer(exporters=[exporter])
+        client = emb_mod.Embeddings()
+
+        with tracer.trace("test-trace"):
+            client.create(model="text-embedding-3-small", input="hi")
+
+        assert len(exporter.traces) == 1
+        assert exporter.traces[0]["spans"][0]["type"] == "embedding"
+        inst.unpatch()
+
+    def test_patch_defaults_to_all_surfaces(self):
+        """Backward compat: patch() with no args still patches everything (bot-captacao's
+        existing auto_instrument() flow must keep working unchanged)."""
+        from tracecast.instrumentors.openai_inst import OpenAIInstrumentor
+        import openai.resources.chat.completions as chat_mod
+
+        original_create = chat_mod.Completions.create
+        inst = OpenAIInstrumentor()
+        inst.patch()
+        assert chat_mod.Completions.create is not original_create
+        inst.unpatch()

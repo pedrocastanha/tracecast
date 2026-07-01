@@ -34,6 +34,24 @@ def auto_instrument(tracer: Optional[Tracer] = None) -> None:
         _instrumented = True
 
 
+def instrument_openai(*, chat: bool = True, embeddings: bool = True, audio: bool = True) -> None:
+    """Patch only the requested OpenAI API surfaces, independent of auto_instrument().
+
+    Use `chat=False` when chat completions are already traced through another
+    mechanism (e.g. a manually-wired LangChain callback) and you only want to
+    add embeddings/audio coverage — re-patching chat.completions in that case
+    would produce duplicate spans for every chat call.
+    """
+    from .instrumentors.openai_inst import OpenAIInstrumentor
+    with _lock:
+        inst = _registry.get("openai")
+        if inst is None:
+            inst = OpenAIInstrumentor()
+            _registry["openai"] = inst
+        if not inst.is_patched():
+            inst.patch(chat=chat, embeddings=embeddings, audio=audio)
+
+
 def _reset() -> None:
     global _instrumented
     with _lock:

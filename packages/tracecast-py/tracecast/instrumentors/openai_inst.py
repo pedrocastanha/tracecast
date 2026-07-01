@@ -32,33 +32,44 @@ class OpenAIInstrumentor(BaseInstrumentor):
         self._original_speech_create: Optional[Any] = None
         self._patched: bool = False
 
-    def patch(self) -> None:
+    def patch(self, *, chat: bool = True, embeddings: bool = True, audio: bool = True) -> None:
+        """Patch the requested OpenAI API surfaces.
+
+        `chat=False` lets callers add embeddings/audio coverage without
+        re-patching chat.completions — needed when chat completions are
+        already traced through another mechanism (e.g. a manually-wired
+        LangChain callback), where re-patching would double-count spans.
+        """
         if self._patched:
             return
-        import openai.resources.chat.completions as mod
 
-        # Sync
-        self._original_create = mod.Completions.create
-        self_ref = self
-        _orig_create = self._original_create
+        if chat:
+            import openai.resources.chat.completions as mod
 
-        def patched_create(client_self, *args, **kwargs):
-            return self_ref._intercept(client_self, args, kwargs, _orig_create)
+            # Sync
+            self._original_create = mod.Completions.create
+            self_ref = self
+            _orig_create = self._original_create
 
-        mod.Completions.create = patched_create
+            def patched_create(client_self, *args, **kwargs):
+                return self_ref._intercept(client_self, args, kwargs, _orig_create)
 
-        # Async
-        if hasattr(mod, "AsyncCompletions"):
-            self._original_acreate = mod.AsyncCompletions.create
-            _orig_acreate = self._original_acreate
+            mod.Completions.create = patched_create
 
-            async def patched_acreate(client_self, *args, **kwargs):
-                return await self_ref._async_intercept(client_self, args, kwargs, _orig_acreate)
+            # Async
+            if hasattr(mod, "AsyncCompletions"):
+                self._original_acreate = mod.AsyncCompletions.create
+                _orig_acreate = self._original_acreate
 
-            mod.AsyncCompletions.create = patched_acreate
+                async def patched_acreate(client_self, *args, **kwargs):
+                    return await self_ref._async_intercept(client_self, args, kwargs, _orig_acreate)
 
-        self._patch_embeddings()
-        self._patch_audio()
+                mod.AsyncCompletions.create = patched_acreate
+
+        if embeddings:
+            self._patch_embeddings()
+        if audio:
+            self._patch_audio()
 
         self._patched = True
 
@@ -108,12 +119,13 @@ class OpenAIInstrumentor(BaseInstrumentor):
     def unpatch(self) -> None:
         if not self._patched:
             return
-        import openai.resources.chat.completions as mod
-        mod.Completions.create = self._original_create
-        if self._original_acreate is not None:
-            mod.AsyncCompletions.create = self._original_acreate
-        self._original_create = None
-        self._original_acreate = None
+        if self._original_create is not None:
+            import openai.resources.chat.completions as mod
+            mod.Completions.create = self._original_create
+            if self._original_acreate is not None:
+                mod.AsyncCompletions.create = self._original_acreate
+            self._original_create = None
+            self._original_acreate = None
 
         if self._original_embeddings_create is not None:
             import openai.resources.embeddings as emb_mod
