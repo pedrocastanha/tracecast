@@ -105,7 +105,7 @@ def test_exporter_falho_nao_propaga_excecao(caplog):
 
     tracer = Tracer(exporters=[bad_exporter, good_exporter])
 
-    with caplog.at_level(logging.ERROR, logger="tracecast"):
+    with caplog.at_level(logging.WARNING, logger="tracecast"):
         with tracer.trace("safe"):
             pass
 

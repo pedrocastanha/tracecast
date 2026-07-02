@@ -151,10 +151,9 @@ class Tracer:
 
     def _handle_export_error(self, exc: Exception, trace: Trace, exporter: BaseExporter) -> None:
         from .logger import _logger
-        _logger.error(
+        _logger.warning(
             "TraceCast: exporter %s failed for trace %s: %s",
             type(exporter).__name__, trace.trace_id, exc,
-            exc_info=True,
         )
         if self.on_export_error is not None:
             try:
