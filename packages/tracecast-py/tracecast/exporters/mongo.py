@@ -46,8 +46,14 @@ class MongoExporter(BaseExporter):
         prompt_collection: str = "tracecast_prompts",
         include_fields: Optional[Iterable[str]] = None,
         exclude_fields: Optional[Iterable[str]] = None,
+        timeout_ms: int = 5000,
     ):
-        self._db = MongoClient(uri)[db]
+        self._db = MongoClient(
+            uri,
+            connectTimeoutMS=timeout_ms,
+            socketTimeoutMS=timeout_ms,
+            serverSelectionTimeoutMS=timeout_ms,
+        )[db]
         self.col = self._db[collection]
         self._collection = self.col
         self._eval_collection = self._db[eval_collection]

@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 import contextvars
 from contextvars import ContextVar
@@ -51,6 +52,7 @@ class Tracer:
         log_prefix: Optional[str] = None,
         on_export_error: Optional[Callable[[Exception, Trace, BaseExporter], None]] = None,
         online_eval=None,
+        blocking_export: bool = False,
     ):
         self.exporters = exporters or []
         self.on_export_error = on_export_error
@@ -59,6 +61,8 @@ class Tracer:
         if logging:
             from .logger import TraceCastLogger
             self._tc_logger = TraceCastLogger(prefix=log_prefix)
+        self.blocking_export = blocking_export
+        self._background_tasks: set = set()
 
     def _run_online_eval(self, trace: Trace) -> None:
         if self.online_eval is None:
@@ -129,7 +133,21 @@ class Tracer:
                     latency_ms=t.latency_ms,
                     tools_used=t.tools_used,
                 )
-            await self._aexport(t)
+            if self.blocking_export:
+                await self._aexport(t)
+            else:
+                self._schedule_aexport(t)
+
+    def _schedule_aexport(self, trace: Trace) -> None:
+        task = asyncio.create_task(self._aexport(trace))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    async def aflush(self, timeout: Optional[float] = None) -> None:
+        pending = list(self._background_tasks)
+        if not pending:
+            return
+        await asyncio.wait(pending, timeout=timeout)
 
     def _handle_export_error(self, exc: Exception, trace: Trace, exporter: BaseExporter) -> None:
         from .logger import _logger
