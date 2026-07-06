@@ -116,7 +116,7 @@ def _make_router(reader: TraceReader, prefix: str = "") -> "APIRouter":
 
     @router.get("/api/metrics")
     def api_metrics(
-        period: str = Query("7d"),
+        period: str = Query("24h"),
         from_dt: Optional[str] = Query(None, alias="from"),
         to_dt: Optional[str] = Query(None, alias="to"),
         project_name: Optional[str] = Query(None),
