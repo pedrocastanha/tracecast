@@ -145,6 +145,82 @@ class TestMongoExporter:
         assert doc["total_tokens"] == 300
         assert doc["cost_usd"] > 0
 
+    def test_compute_daily_snapshot_upserts_per_project(self):
+        from datetime import date
+        exporter, mock_col = self._make_exporter()
+        mock_snapshots = MagicMock()
+        exporter._snapshots = mock_snapshots
+        mock_col.aggregate.return_value = [
+            {
+                "_id": "p1", "project_name": "proj-one", "trace_count": 3,
+                "total_tokens_in": 100, "total_tokens_out": 50,
+                "total_tokens_in_cached": 10, "total_cost_usd": 0.05,
+                "total_latency_ms": 900,
+            },
+            {
+                "_id": None, "project_name": None, "trace_count": 1,
+                "total_tokens_in": 5, "total_tokens_out": 2,
+                "total_tokens_in_cached": 0, "total_cost_usd": 0.001,
+                "total_latency_ms": 100,
+            },
+        ]
+
+        day = date(2026, 6, 1)
+        count = exporter.compute_daily_snapshot(day)
+
+        assert count == 2
+        match = mock_col.aggregate.call_args[0][0][0]["$match"]
+        assert match["started_at"]["$gte"] == "2026-06-01T00:00:00+00:00"
+        assert match["started_at"]["$lt"] == "2026-06-02T00:00:00+00:00"
+
+        calls = mock_snapshots.replace_one.call_args_list
+        assert len(calls) == 2
+        filter0, doc0 = calls[0][0]
+        assert filter0 == {"date": "2026-06-01", "project_id": "p1"}
+        assert doc0["trace_count"] == 3
+        assert doc0["total_cost_usd"] == 0.05
+        assert calls[0].kwargs.get("upsert") is True
+
+    def test_purge_traces_before_uses_isoformat_cutoff(self):
+        exporter, mock_col = self._make_exporter()
+        mock_col.delete_many.return_value = MagicMock(deleted_count=42)
+        cutoff = datetime(2026, 6, 1, tzinfo=timezone.utc)
+
+        deleted = exporter.purge_traces_before(cutoff)
+
+        assert deleted == 42
+        filt = mock_col.delete_many.call_args[0][0]
+        assert filt["started_at"]["$lt"] == cutoff.isoformat()
+        assert isinstance(filt["started_at"]["$lt"], str)
+
+    def test_query_snapshots_filters_by_date_range_and_project(self):
+        from datetime import date
+        exporter, _ = self._make_exporter()
+        mock_snapshots = MagicMock()
+        mock_snapshots.find.return_value = [{"date": "2026-06-01", "trace_count": 3}]
+        exporter._snapshots = mock_snapshots
+
+        rows = exporter.query_snapshots(
+            from_date=date(2026, 6, 1), to_date=date(2026, 6, 7), project_id="p1",
+        )
+
+        assert rows == [{"date": "2026-06-01", "trace_count": 3}]
+        match = mock_snapshots.find.call_args[0][0]
+        assert match["date"] == {"$gte": "2026-06-01", "$lte": "2026-06-07"}
+        assert match["project_id"] == "p1"
+
+    def test_oldest_trace_date_parses_iso_string(self):
+        exporter, mock_col = self._make_exporter()
+        mock_col.find_one.return_value = {"started_at": "2026-06-01T12:00:00+00:00"}
+
+        from datetime import date
+        assert exporter.oldest_trace_date() == date(2026, 6, 1)
+
+    def test_oldest_trace_date_none_when_empty(self):
+        exporter, mock_col = self._make_exporter()
+        mock_col.find_one.return_value = None
+        assert exporter.oldest_trace_date() is None
+
     def test_mongo_nao_instalado_lanca_import_error(self):
         with patch.dict("sys.modules", {"pymongo": None}):
             import importlib

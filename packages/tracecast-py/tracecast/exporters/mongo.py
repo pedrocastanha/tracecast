@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Set
 from pymongo import ASCENDING, DESCENDING, MongoClient
 from .base import BaseExporter
@@ -47,6 +47,7 @@ class MongoExporter(BaseExporter):
         include_fields: Optional[Iterable[str]] = None,
         exclude_fields: Optional[Iterable[str]] = None,
         timeout_ms: int = 5000,
+        snapshot_collection: str = "tracecast_daily_snapshots",
     ):
         self._db = MongoClient(
             uri,
@@ -59,6 +60,7 @@ class MongoExporter(BaseExporter):
         self._eval_collection = self._db[eval_collection]
         self._score_collection = self._db[score_collection]
         self._prompt_collection = self._db[prompt_collection]
+        self._snapshots = self._db[snapshot_collection]
         self._include: Optional[Set[str]] = set(include_fields) if include_fields is not None else None
         self._exclude: Optional[Set[str]] = set(exclude_fields) if exclude_fields is not None else None
         self._indexed = False
@@ -71,8 +73,69 @@ class MongoExporter(BaseExporter):
             self._collection.create_index("trace_id", unique=True)
             self._collection.create_index([("started_at", DESCENDING)])
             self._collection.create_index([("project_id", ASCENDING), ("started_at", DESCENDING)])
+            self._snapshots.create_index([("date", ASCENDING), ("project_id", ASCENDING)], unique=True)
         except Exception:
             pass
+
+    def oldest_trace_date(self) -> Optional[date]:
+        doc = self._collection.find_one({}, sort=[("started_at", ASCENDING)], projection={"started_at": 1})
+        if not doc or not doc.get("started_at"):
+            return None
+        return datetime.fromisoformat(doc["started_at"]).date()
+
+    def compute_daily_snapshot(self, day: date) -> int:
+        self._ensure_indexes()
+        day_start = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+        day_end = day_start + timedelta(days=1)
+        pipeline = [
+            {"$match": {"started_at": {"$gte": day_start.isoformat(), "$lt": day_end.isoformat()}}},
+            {"$group": {
+                "_id": "$project_id",
+                "project_name": {"$first": "$project_name"},
+                "trace_count": {"$sum": 1},
+                "total_tokens_in": {"$sum": "$total_tokens_in"},
+                "total_tokens_out": {"$sum": "$total_tokens_out"},
+                "total_tokens_in_cached": {"$sum": "$total_tokens_in_cached"},
+                "total_cost_usd": {"$sum": "$cost_usd"},
+                "total_latency_ms": {"$sum": "$latency_ms"},
+            }},
+        ]
+        groups = list(self._collection.aggregate(pipeline))
+        for g in groups:
+            doc = {
+                "date": day.isoformat(),
+                "project_id": g["_id"],
+                "project_name": g.get("project_name"),
+                "trace_count": g["trace_count"],
+                "total_tokens_in": g.get("total_tokens_in") or 0,
+                "total_tokens_out": g.get("total_tokens_out") or 0,
+                "total_tokens_in_cached": g.get("total_tokens_in_cached") or 0,
+                "total_cost_usd": g.get("total_cost_usd") or 0.0,
+                "total_latency_ms": g.get("total_latency_ms") or 0,
+            }
+            self._snapshots.replace_one(
+                {"date": doc["date"], "project_id": doc["project_id"]}, doc, upsert=True
+            )
+        return len(groups)
+
+    def purge_traces_before(self, cutoff: datetime) -> int:
+        result = self._collection.delete_many({"started_at": {"$lt": cutoff.isoformat()}})
+        return result.deleted_count
+
+    def query_snapshots(
+        self,
+        *,
+        from_date: date,
+        to_date: date,
+        project_id: Optional[str] = None,
+        project_name: Optional[str] = None,
+    ) -> List[dict]:
+        match: Dict[str, Any] = {"date": {"$gte": from_date.isoformat(), "$lte": to_date.isoformat()}}
+        if project_id:
+            match["project_id"] = project_id
+        if project_name:
+            match["project_name"] = project_name
+        return list(self._snapshots.find(match, {"_id": 0}))
 
     def export(self, trace: Trace) -> None:
         self._ensure_indexes()

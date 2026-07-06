@@ -13,9 +13,10 @@ DEFAULT_METRICS_WINDOW = timedelta(hours=24)
 class TraceReader:
     """Reads traces from the Tracer's exporters. Priority: Dict > JsonFile (others via duck typing)."""
 
-    def __init__(self, exporters: list, max_traces: int = 500):
+    def __init__(self, exporters: list, max_traces: int = 500, retention_days: Optional[int] = None):
         self._exporters = exporters
         self._max_traces = max_traces
+        self.retention_days = retention_days
         self._cache: Optional[List[Trace]] = None
         self._cache_ttl = 5.0
         self._last_read = 0.0
@@ -95,6 +96,76 @@ class TraceReader:
             limit=total, offset=0,
         )
         return [_hydrate_trace(r) for r in rows]
+
+    def get_metrics_totals(
+        self,
+        *,
+        from_dt: datetime,
+        to_dt: datetime,
+        project_name: Optional[str] = None,
+        project_id: Optional[str] = None,
+    ) -> Optional[dict]:
+        exporter = self._readable()
+        if exporter is None or self.retention_days is None or not hasattr(exporter, "query_snapshots"):
+            return None
+
+        cutoff_day = (datetime.now(timezone.utc) - timedelta(days=self.retention_days)).date()
+        if from_dt.date() >= cutoff_day:
+            return None
+
+        raw_from = max(from_dt, datetime(cutoff_day.year, cutoff_day.month, cutoff_day.day, tzinfo=timezone.utc))
+        daily: dict = {}
+        total_traces = 0
+        total_tokens_in = total_tokens_out = total_tokens_in_cached = 0
+        total_cost = 0.0
+        total_latency = 0
+
+        if raw_from <= to_dt:
+            raw_traces = self.get_traces_for_metrics(
+                project_name=project_name, project_id=project_id, from_dt=raw_from, to_dt=to_dt,
+            )
+            for t in raw_traces:
+                total_traces += 1
+                total_tokens_in += t.total_tokens_in
+                total_tokens_out += t.total_tokens_out
+                total_tokens_in_cached += t.total_tokens_in_cached
+                total_cost += t.cost_usd
+                total_latency += t.latency_ms or 0
+                day = t.started_at.strftime("%Y-%m-%d")
+                d = daily.setdefault(day, {"date": day, "traces": 0, "cost_usd": 0.0})
+                d["traces"] += 1
+                d["cost_usd"] += t.cost_usd
+
+        snap_to_day = min(to_dt.date(), cutoff_day - timedelta(days=1))
+        if from_dt.date() <= snap_to_day:
+            snaps = exporter.query_snapshots(
+                from_date=from_dt.date(), to_date=snap_to_day,
+                project_id=project_id, project_name=project_name,
+            )
+            for s in snaps:
+                total_traces += s["trace_count"]
+                total_tokens_in += s["total_tokens_in"]
+                total_tokens_out += s["total_tokens_out"]
+                total_tokens_in_cached += s["total_tokens_in_cached"]
+                total_cost += s["total_cost_usd"]
+                total_latency += s["total_latency_ms"]
+                day = s["date"]
+                d = daily.setdefault(day, {"date": day, "traces": 0, "cost_usd": 0.0})
+                d["traces"] += s["trace_count"]
+                d["cost_usd"] += s["total_cost_usd"]
+
+        avg_latency = total_latency / total_traces if total_traces else 0
+        cache_hit_rate = total_tokens_in_cached / total_tokens_in if total_tokens_in else 0.0
+        return {
+            "total_traces": total_traces,
+            "total_cost_usd": round(total_cost, 6),
+            "total_tokens_in": total_tokens_in,
+            "total_tokens_out": total_tokens_out,
+            "total_tokens_in_cached": total_tokens_in_cached,
+            "avg_latency_ms": round(avg_latency, 1),
+            "cache_hit_rate": round(cache_hit_rate, 4),
+            "traces_over_time": sorted(daily.values(), key=lambda d: d["date"]),
+        }
 
     def get_trace(self, trace_id: str) -> Optional[Trace]:
         exporter = self._readable()

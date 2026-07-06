@@ -53,6 +53,7 @@ class Tracer:
         on_export_error: Optional[Callable[[Exception, Trace, BaseExporter], None]] = None,
         online_eval=None,
         blocking_export: bool = False,
+        retention_days: Optional[int] = None,
     ):
         self.exporters = exporters or []
         self.on_export_error = on_export_error
@@ -62,6 +63,7 @@ class Tracer:
             from .logger import TraceCastLogger
             self._tc_logger = TraceCastLogger(prefix=log_prefix)
         self.blocking_export = blocking_export
+        self.retention_days = retention_days
         self._background_tasks: set = set()
 
     def _run_online_eval(self, trace: Trace) -> None:
@@ -192,7 +194,10 @@ class Tracer:
         read_only: bool = True,
         auth: Optional[tuple] = None,
         max_traces: int = 500,
+        retention_days: Optional[int] = None,
     ):
+        if retention_days is not None:
+            self.retention_days = retention_days
         if not self.exporters:
             import warnings
             from ..exporters.dict_exporter import DictExporter
@@ -205,7 +210,7 @@ class Tracer:
             )
 
         from ..dashboard.reader import TraceReader
-        reader = TraceReader(self.exporters, max_traces=max_traces)
+        reader = TraceReader(self.exporters, max_traces=max_traces, retention_days=self.retention_days)
 
         try:
             from fastapi import FastAPI
@@ -213,6 +218,19 @@ class Tracer:
                 from ..dashboard.router import _make_router
                 router = _make_router(reader, prefix=prefix)
                 app.include_router(router, prefix=prefix)
+                if self.retention_days:
+                    from ..exporters.mongo import MongoExporter
+                    mongo_exporters = [e for e in self.exporters if isinstance(e, MongoExporter)]
+                    if mongo_exporters:
+                        from ..dashboard.retention import retention_loop
+
+                        def _start_retention() -> None:
+                            for exp in mongo_exporters:
+                                task = asyncio.create_task(retention_loop(exp, self.retention_days))
+                                self._background_tasks.add(task)
+                                task.add_done_callback(self._background_tasks.discard)
+
+                        app.add_event_handler("startup", _start_retention)
                 return
         except ImportError:
             pass

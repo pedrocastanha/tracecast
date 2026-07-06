@@ -131,7 +131,7 @@ def _make_router(reader: TraceReader, prefix: str = "") -> "APIRouter":
             project_name=project_name, project_id=project_id,
             from_dt=from_parsed, to_dt=to_parsed,
         )
-        return compute_metrics(
+        metrics = compute_metrics(
             traces,
             period=period,
             from_dt=from_parsed,
@@ -139,6 +139,13 @@ def _make_router(reader: TraceReader, prefix: str = "") -> "APIRouter":
             project_name=project_name,
             project_id=project_id,
         )
+        totals = reader.get_metrics_totals(
+            from_dt=from_parsed, to_dt=to_parsed,
+            project_name=project_name, project_id=project_id,
+        )
+        if totals is not None:
+            metrics.update(totals)
+        return metrics
 
     @router.get("/api/health")
     def api_health():
