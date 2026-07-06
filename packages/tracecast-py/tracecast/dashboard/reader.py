@@ -5,7 +5,9 @@ from pathlib import Path
 from typing import List, Optional, Callable
 from ..models.trace import Trace
 from ..models.span import Span, SpanType, SpanStatus
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+
+DEFAULT_METRICS_WINDOW = timedelta(hours=24)
 
 
 class TraceReader:
@@ -75,16 +77,23 @@ class TraceReader:
         self,
         project_name: Optional[str] = None,
         project_id: Optional[str] = None,
+        from_dt: Optional[datetime] = None,
+        to_dt: Optional[datetime] = None,
     ) -> List[Trace]:
-        """Like get_traces() but bypasses max_traces for queryable exporters,
-        so dashboard aggregates reflect the full dataset instead of a capped window."""
         exporter = self._readable()
         if exporter is None:
             return self.get_traces()
-        total = exporter.count(project_name=project_name, project_id=project_id)
+        unfiltered = project_name is None and project_id is None and from_dt is None and to_dt is None
+        if unfiltered:
+            from_dt = datetime.now(timezone.utc) - DEFAULT_METRICS_WINDOW
+        total = exporter.count(project_name=project_name, project_id=project_id, from_dt=from_dt, to_dt=to_dt)
         if total <= 0:
             return []
-        rows = exporter.query(project_name=project_name, project_id=project_id, limit=total, offset=0)
+        rows = exporter.query(
+            project_name=project_name, project_id=project_id,
+            from_dt=from_dt, to_dt=to_dt,
+            limit=total, offset=0,
+        )
         return [_hydrate_trace(r) for r in rows]
 
     def get_trace(self, trace_id: str) -> Optional[Trace]:
@@ -104,15 +113,20 @@ class TraceReader:
         user_id: Optional[str] = None,
     ) -> list:
         from .aggregator import compute_sessions
+        traces = self.get_traces_for_metrics(project_name=project_name, project_id=project_id)
         return compute_sessions(
-            self.get_traces_for_metrics(),
+            traces,
             project_name=project_name,
             project_id=project_id,
             user_id=user_id,
         )
 
     def get_session(self, session_id: str) -> List[Trace]:
-        return [t for t in self.get_traces_for_metrics() if t.session_id == session_id]
+        exporter = self._readable()
+        if exporter is None:
+            return [t for t in self.get_traces() if t.session_id == session_id]
+        rows = exporter.query(session_id=session_id, limit=self._max_traces, offset=0)
+        return [_hydrate_trace(r) for r in rows]
 
     def get_projects(self) -> list:
         from .aggregator import compute_projects
@@ -120,11 +134,11 @@ class TraceReader:
 
     def get_subprojects(self, project_name: str) -> list:
         from .aggregator import compute_projects_by_id
-        traces = [t for t in self.get_traces_for_metrics() if t.project_name == project_name]
+        traces = self.get_traces_for_metrics(project_name=project_name)
         return compute_projects_by_id(traces)
 
     def get_project(self, project_id: str) -> List[Trace]:
-        return [t for t in self.get_traces_for_metrics() if t.project_id == project_id]
+        return self.get_traces_for_metrics(project_id=project_id)
 
     def get_filter_options(self) -> dict:
         from .aggregator import compute_filter_options
