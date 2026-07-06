@@ -12,7 +12,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional
 from .reader import TraceReader
-from .aggregator import compute_metrics, paginate_traces, _trace_summary, build_graph, compute_filter_options
+from .aggregator import compute_metrics, paginate_traces, _trace_summary, build_graph, compute_filter_options, _period_delta
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -124,6 +124,9 @@ def _make_router(reader: TraceReader, prefix: str = "") -> "APIRouter":
     ):
         from_parsed = _parse_iso(from_dt)
         to_parsed = _parse_iso(to_dt)
+        if from_parsed is None:
+            to_parsed = datetime.now(timezone.utc)
+            from_parsed = to_parsed - _period_delta(period)
         traces = reader.get_traces_for_metrics(
             project_name=project_name, project_id=project_id,
             from_dt=from_parsed, to_dt=to_parsed,
