@@ -1,5 +1,5 @@
 from datetime import date, datetime, timedelta, timezone
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from tracecast.dashboard.retention import run_maintenance_once
 
@@ -16,7 +16,7 @@ def test_snapshots_each_day_before_cutoff_then_purges():
     oldest = cutoff_day - timedelta(days=3)
     exporter = _fake_exporter(oldest)
 
-    run_maintenance_once(exporter, retention_days=7)
+    run_maintenance_once(exporter, retention_days=7, pace_seconds=0)
 
     snapshotted_days = [c.args[0] for c in exporter.compute_daily_snapshot.call_args_list]
     assert snapshotted_days == [
@@ -32,7 +32,7 @@ def test_snapshots_each_day_before_cutoff_then_purges():
 def test_no_op_when_no_traces_yet():
     exporter = _fake_exporter(None)
 
-    run_maintenance_once(exporter, retention_days=7)
+    run_maintenance_once(exporter, retention_days=7, pace_seconds=0)
 
     exporter.compute_daily_snapshot.assert_not_called()
     exporter.purge_traces_before.assert_not_called()
@@ -42,7 +42,7 @@ def test_no_op_when_oldest_trace_already_within_retention():
     now = datetime.now(timezone.utc)
     exporter = _fake_exporter(now.date())
 
-    run_maintenance_once(exporter, retention_days=7)
+    run_maintenance_once(exporter, retention_days=7, pace_seconds=0)
 
     exporter.compute_daily_snapshot.assert_not_called()
     exporter.purge_traces_before.assert_called_once()
@@ -55,7 +55,20 @@ def test_stops_snapshotting_on_failure_and_skips_purge():
     exporter = _fake_exporter(oldest)
     exporter.compute_daily_snapshot.side_effect = RuntimeError("boom")
 
-    run_maintenance_once(exporter, retention_days=7)
+    run_maintenance_once(exporter, retention_days=7, pace_seconds=0)
 
     exporter.compute_daily_snapshot.assert_called_once_with(oldest)
     exporter.purge_traces_before.assert_not_called()
+
+
+def test_paces_between_days_but_not_before_the_first():
+    now = datetime.now(timezone.utc)
+    cutoff_day = (now - timedelta(days=7)).date()
+    oldest = cutoff_day - timedelta(days=3)
+    exporter = _fake_exporter(oldest)
+
+    with patch("tracecast.dashboard.retention.time.sleep") as mock_sleep:
+        run_maintenance_once(exporter, retention_days=7, pace_seconds=2.0)
+
+    assert mock_sleep.call_count == 2
+    mock_sleep.assert_called_with(2.0)

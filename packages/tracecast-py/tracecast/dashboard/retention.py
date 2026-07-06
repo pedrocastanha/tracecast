@@ -1,11 +1,12 @@
 import asyncio
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 
 _logger = logging.getLogger("tracecast")
 
 
-def run_maintenance_once(exporter, retention_days: int) -> None:
+def run_maintenance_once(exporter, retention_days: int, pace_seconds: float = 2.0) -> None:
     now = datetime.now(timezone.utc)
     cutoff_day = (now - timedelta(days=retention_days)).date()
 
@@ -14,7 +15,11 @@ def run_maintenance_once(exporter, retention_days: int) -> None:
         return
 
     day = oldest
+    first = True
     while day < cutoff_day:
+        if not first:
+            time.sleep(pace_seconds)
+        first = False
         try:
             exporter.compute_daily_snapshot(day)
         except Exception:
