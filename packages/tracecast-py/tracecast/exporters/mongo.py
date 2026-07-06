@@ -27,9 +27,9 @@ def _build_match(project_id, user_id, session_id, from_dt, to_dt, project_name=N
     if from_dt or to_dt:
         started: Dict[str, Any] = {}
         if from_dt:
-            started["$gte"] = from_dt
+            started["$gte"] = from_dt.isoformat()
         if to_dt:
-            started["$lte"] = to_dt
+            started["$lte"] = to_dt.isoformat()
         match["started_at"] = started
     return match
 
