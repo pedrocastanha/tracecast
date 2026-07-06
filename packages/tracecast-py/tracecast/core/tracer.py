@@ -224,13 +224,17 @@ class Tracer:
                     if mongo_exporters:
                         from ..dashboard.retention import retention_loop
 
-                        def _start_retention() -> None:
-                            for exp in mongo_exporters:
-                                task = asyncio.create_task(retention_loop(exp, self.retention_days))
-                                self._background_tasks.add(task)
-                                task.add_done_callback(self._background_tasks.discard)
+                        retention_started = {"done": False}
 
-                        app.add_event_handler("startup", _start_retention)
+                        @app.middleware("http")
+                        async def _start_retention_once(request, call_next):
+                            if not retention_started["done"]:
+                                retention_started["done"] = True
+                                for exp in mongo_exporters:
+                                    task = asyncio.create_task(retention_loop(exp, self.retention_days))
+                                    self._background_tasks.add(task)
+                                    task.add_done_callback(self._background_tasks.discard)
+                            return await call_next(request)
                 return
         except ImportError:
             pass
