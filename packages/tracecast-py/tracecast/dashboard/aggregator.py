@@ -137,6 +137,9 @@ def paginate_traces(
 
 
 def _trace_summary(trace: Trace) -> dict:
+    meta = trace.metadata or {}
+    export_status = meta.get("_export_status") or "complete"
+    is_summary = bool(meta.get("_is_summary") or export_status == "summary_only")
     return {
         "trace_id": trace.trace_id,
         "name": trace.name,
@@ -155,6 +158,9 @@ def _trace_summary(trace: Trace) -> dict:
         "cost_usd": trace.cost_usd,
         "span_count": len(trace.spans),
         "tools_used": trace.tools_used,
+        "export_status": export_status,
+        "is_summary": is_summary,
+        "export_error": meta.get("_export_error"),
     }
 
 

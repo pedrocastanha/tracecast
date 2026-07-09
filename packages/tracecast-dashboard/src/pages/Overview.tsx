@@ -104,6 +104,16 @@ export function Overview() {
     metricsParams,
     [period, customFrom, customTo, filter.projectName, filter.projectId],
   );
+  const { data: health } = useApi<{
+    export?: {
+      exported_ok?: number;
+      export_failed?: number;
+      summary_fallback?: number;
+      queue_dropped?: number;
+      queue_size?: number;
+      last_error?: string | null;
+    } | null;
+  }>("/health", []);
 
   if (loading) return <div style={{ color: "var(--text-muted)" }}>Loading…</div>;
   if (error || !m) return <div style={{ color: "var(--red)" }}>Error: {error ?? "Failed to load metrics"}</div>;
@@ -111,6 +121,7 @@ export function Overview() {
   const projectData = Object.entries(m.cost_by_project).map(([name, value]) => ({ name, value }));
   const modelNames = [...new Set((m.tokens_by_model_over_time ?? []).map((r) => r.model))];
   const modelPivoted = pivotModelData(m.tokens_by_model_over_time ?? []);
+  const ex = health?.export;
 
   return (
     <div>
@@ -147,6 +158,27 @@ export function Overview() {
         <StatCard label="Tokens Out" value={m.total_tokens_out.toLocaleString()} accent="#7dd3fc" />
         <StatCard label="Tokens Cached" value={m.total_tokens_in_cached.toLocaleString()} accent="#56e29a" />
       </div>
+
+      {ex && (
+        <div style={{
+          ...panel, marginBottom: 24,
+          display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12,
+        }}>
+          <div style={{ gridColumn: "1 / -1" }}>
+            <h3 style={{ ...panelTitle, marginBottom: 4 }}>Export health</h3>
+            {ex.last_error && (
+              <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--text-muted)", marginBottom: 8 }}>
+                last error: {ex.last_error}
+              </div>
+            )}
+          </div>
+          <StatCard label="Exported OK" value={String(ex.exported_ok ?? 0)} accent="#56e29a" />
+          <StatCard label="Failed" value={String(ex.export_failed ?? 0)} accent="#fb7185" />
+          <StatCard label="Summary fallback" value={String(ex.summary_fallback ?? 0)} accent="#fbbf24" />
+          <StatCard label="Queue dropped" value={String(ex.queue_dropped ?? 0)} accent="#a78bfa" />
+          <StatCard label="Queue depth" value={String(ex.queue_size ?? 0)} accent="#7dd3fc" />
+        </div>
+      )}
 
       <div style={{ display: "flex", gap: 16, marginBottom: 16 }}>
         {/* Cost over time */}

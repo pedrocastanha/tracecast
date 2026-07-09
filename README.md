@@ -48,7 +48,11 @@ pip install "tracecast[all]"        # tudo
 from tracecast import Tracer, auto_instrument
 from tracecast.exporters.mongo import MongoExporter
 
-tracer = Tracer(exporters=[MongoExporter("mongodb://localhost:27017", db="myapp")], logging=True)
+tracer = Tracer(
+    exporters=[MongoExporter("mongodb://localhost:27017", db="myapp")],
+    logging=True,
+    background_export=True,  # fila limitada — seguro em VMs pequenas
+)
 auto_instrument(tracer)  # registra o callback global do LangChain
 
 # decore a função/rota que inicia a request
@@ -286,7 +290,11 @@ Usa `logging.getLogger("tracecast")`. Configure com `logging.basicConfig` ou qua
    ```python
    Tracer(exporters=[...], on_export_error=lambda exc, trace, exp: alertar(exc))
    ```
-3. **Export assíncrono não-bloqueante** — `aexport` roda fora do event loop (offload em thread).
+3. **Export assíncrono seguro (estilo Langfuse/LangSmith)** — `background_export=True` com fila
+   limitada, batch por contagem/tempo/bytes, serialize cedo, sample rate e drop sob overload.
+   Envs: `TRACECAST_EXPORT_QUEUE`, `TRACECAST_FLUSH_AT`, `TRACECAST_FLUSH_INTERVAL`,
+   `TRACECAST_MAX_BATCH_BYTES`, `TRACECAST_SAMPLE_RATE`, `TRACECAST_MAX_PAYLOAD_CHARS`.
+   Use `flush()` / `aflush()` em testes/short-lived.
 4. **Spans com erro** marcados com `status="error"` + `error` (first-class, não enterrado em metadata).
 5. **Multi-tenant / concorrência** — cada coroutine/thread isola seu próprio trace via `ContextVar`.
 

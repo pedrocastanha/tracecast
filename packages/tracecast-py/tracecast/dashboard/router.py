@@ -42,6 +42,18 @@ def _mime(filename: str) -> str:
     return "application/octet-stream"
 
 
+def _trace_to_api_dict(trace) -> dict:
+    doc = trace.to_dict()
+    meta = trace.metadata or {}
+    export_status = meta.get("_export_status") or "complete"
+    is_summary = bool(meta.get("_is_summary") or export_status == "summary_only")
+    doc["export_status"] = export_status
+    doc["is_summary"] = is_summary
+    if meta.get("_export_error") is not None:
+        doc["export_error"] = meta.get("_export_error")
+    return doc
+
+
 def _parse_iso(s: Optional[str]) -> Optional[datetime]:
     if not s:
         return None
@@ -105,13 +117,16 @@ def _make_router(reader: TraceReader, prefix: str = "") -> "APIRouter":
         trace = reader.get_trace(trace_id)
         if not trace:
             raise HTTPException(status_code=404, detail="Trace not found")
-        return trace.to_dict()
+        return _trace_to_api_dict(trace)
 
     @router.get("/api/traces/{trace_id}/graph")
     def api_trace_graph(trace_id: str):
         trace = reader.get_trace(trace_id)
         if not trace:
             raise HTTPException(status_code=404, detail="Trace not found")
+        meta = trace.metadata or {}
+        if meta.get("_is_summary") or meta.get("_export_status") == "summary_only":
+            return {"nodes": [], "edges": []}
         return build_graph(trace)
 
     @router.get("/api/metrics")
@@ -149,11 +164,19 @@ def _make_router(reader: TraceReader, prefix: str = "") -> "APIRouter":
 
     @router.get("/api/health")
     def api_health():
-        return {
+        body = {
             "status": "ok",
             "version": "0.3.0",
             "exporter": type(reader._exporters[0]).__name__ if reader._exporters else "none",
+            "export": None,
         }
+        provider = getattr(reader, "export_stats_provider", None)
+        if callable(provider):
+            try:
+                body["export"] = provider()
+            except Exception:
+                body["export"] = {"error": "stats_unavailable"}
+        return body
 
     @router.get("/", response_class=HTMLResponse)
     def dashboard_index():

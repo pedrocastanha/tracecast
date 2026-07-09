@@ -2,17 +2,27 @@
 
 import json
 from pathlib import Path
-from typing import List, Optional, Callable
+from typing import List, Optional, Callable, Any
 from ..models.trace import Trace
 from ..models.span import Span, SpanType, SpanStatus
 from datetime import datetime, timedelta, timezone
 
 DEFAULT_METRICS_WINDOW = timedelta(hours=24)
+DEFAULT_METRICS_MAX_TRACES = 1000
+
+
+def _metrics_max_traces() -> int:
+    import os
+    raw = os.environ.get("TRACECAST_METRICS_MAX_TRACES")
+    if raw is None or raw == "":
+        return DEFAULT_METRICS_MAX_TRACES
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return DEFAULT_METRICS_MAX_TRACES
 
 
 class TraceReader:
-    """Reads traces from the Tracer's exporters. Priority: Dict > JsonFile (others via duck typing)."""
-
     def __init__(self, exporters: list, max_traces: int = 500, retention_days: Optional[int] = None):
         self._exporters = exporters
         self._max_traces = max_traces
@@ -20,6 +30,7 @@ class TraceReader:
         self._cache: Optional[List[Trace]] = None
         self._cache_ttl = 5.0
         self._last_read = 0.0
+        self.export_stats_provider: Optional[Callable[[], dict]] = None
 
     def get_traces(self) -> List[Trace]:
         import time
@@ -63,16 +74,19 @@ class TraceReader:
         if exporter is None:
             return None
         offset = (max(page, 1) - 1) * page_size
-        rows = exporter.query(
-            project_name=project_name, project_id=project_id, user_id=user_id, session_id=session_id,
-            from_dt=from_dt, to_dt=to_dt,
-            limit=page_size, offset=offset, sort_by=sort_by, order=order,
-        )
-        total = exporter.count(
-            project_name=project_name, project_id=project_id, user_id=user_id, session_id=session_id,
-            from_dt=from_dt, to_dt=to_dt,
-        )
-        return [_hydrate_trace(r) for r in rows], total
+        try:
+            rows = exporter.query(
+                project_name=project_name, project_id=project_id, user_id=user_id, session_id=session_id,
+                from_dt=from_dt, to_dt=to_dt,
+                limit=page_size, offset=offset, sort_by=sort_by, order=order,
+            )
+            total = exporter.count(
+                project_name=project_name, project_id=project_id, user_id=user_id, session_id=session_id,
+                from_dt=from_dt, to_dt=to_dt,
+            )
+        except Exception:
+            return None
+        return [_hydrate_trace(_strip_span_payloads(r)) for r in rows], total
 
     def get_traces_for_metrics(
         self,
@@ -87,15 +101,19 @@ class TraceReader:
         unfiltered = project_name is None and project_id is None and from_dt is None and to_dt is None
         if unfiltered:
             from_dt = datetime.now(timezone.utc) - DEFAULT_METRICS_WINDOW
-        total = exporter.count(project_name=project_name, project_id=project_id, from_dt=from_dt, to_dt=to_dt)
-        if total <= 0:
-            return []
-        rows = exporter.query(
-            project_name=project_name, project_id=project_id,
-            from_dt=from_dt, to_dt=to_dt,
-            limit=total, offset=0,
-        )
-        return [_hydrate_trace(r) for r in rows]
+        try:
+            total = exporter.count(project_name=project_name, project_id=project_id, from_dt=from_dt, to_dt=to_dt)
+            if total <= 0:
+                return []
+            cap = _metrics_max_traces()
+            rows = exporter.query(
+                project_name=project_name, project_id=project_id,
+                from_dt=from_dt, to_dt=to_dt,
+                limit=min(total, cap), offset=0,
+            )
+            return [_hydrate_trace(r) for r in rows]
+        except Exception:
+            return self.get_traces()
 
     def get_metrics_totals(
         self,
@@ -170,8 +188,12 @@ class TraceReader:
     def get_trace(self, trace_id: str) -> Optional[Trace]:
         exporter = self._readable()
         if exporter is not None and callable(getattr(exporter, "get", None)):
-            doc = exporter.get(trace_id)
-            return _hydrate_trace(doc) if doc else None
+            try:
+                doc = exporter.get(trace_id)
+                if doc:
+                    return _hydrate_trace(doc)
+            except Exception:
+                pass
         for t in self.get_traces():
             if t.trace_id == trace_id:
                 return t
@@ -284,6 +306,26 @@ class TraceReader:
             return []
 
 
+def _strip_span_payloads(d: dict) -> dict:
+    if not isinstance(d, dict):
+        return d
+    spans = d.get("spans")
+    if not spans:
+        return d
+    out = dict(d)
+    stripped = []
+    for s in spans:
+        if not isinstance(s, dict):
+            stripped.append(s)
+            continue
+        sc = dict(s)
+        sc.pop("input", None)
+        sc.pop("output", None)
+        stripped.append(sc)
+    out["spans"] = stripped
+    return out
+
+
 def _hydrate_trace(d: dict) -> Trace:
     spans = []
     for s in d.get("spans") or []:
@@ -306,6 +348,16 @@ def _hydrate_trace(d: dict) -> Trace:
             metadata=s.get("metadata", {}),
         ))
 
+    meta = dict(d.get("metadata") or {})
+    export_status = d.get("export_status") or meta.get("_export_status") or "complete"
+    is_summary = bool(d.get("is_summary") if d.get("is_summary") is not None else meta.get("_is_summary"))
+    export_error = d.get("export_error") if d.get("export_error") is not None else meta.get("_export_error")
+    if export_status != "complete" or is_summary or export_error:
+        meta["_export_status"] = export_status
+        meta["_is_summary"] = is_summary or export_status == "summary_only"
+        if export_error is not None:
+            meta["_export_error"] = export_error
+
     return Trace(
         trace_id=d.get("trace_id", d.get("traceId", "")),
         name=d.get("name", "unknown"),
@@ -325,7 +377,7 @@ def _hydrate_trace(d: dict) -> Trace:
         tools_used=d.get("tools_used", d.get("toolsUsed", {})),
         spans=spans,
         edges=d.get("edges", []),
-        metadata=d.get("metadata", {}),
+        metadata=meta,
     )
 
 

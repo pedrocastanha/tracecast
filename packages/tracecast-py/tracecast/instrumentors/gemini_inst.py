@@ -48,6 +48,7 @@ class GeminiInstrumentor(BaseInstrumentor):
         from ..models.span import Span, SpanType
         from ..core.token_counter import extract_tokens, extract_content
         from ..core.cost_calculator import calculate_cost
+        from ..core.payload import truncate_payload
 
         model_name = getattr(model_self, "model_name", "unknown")
         input_text = contents if isinstance(contents, str) else str(contents)
@@ -59,7 +60,7 @@ class GeminiInstrumentor(BaseInstrumentor):
             name=f"llm:{model_name}",
             model=model_name,
             started_at=datetime.now(timezone.utc),
-            input=input_text,
+            input=truncate_payload(input_text),
         )
 
         try:
@@ -81,6 +82,6 @@ class GeminiInstrumentor(BaseInstrumentor):
             span.tokens_out,
             tokens_in_cached=span.tokens_in_cached,
         )
-        span.output = extract_content(response, "gemini")
+        span.output = truncate_payload(extract_content(response, "gemini"))
         trace.spans.append(span)
         return response

@@ -215,17 +215,19 @@ mas em handler sync de produção adiciona o round-trip do banco (~1–10ms) ao 
 Com `Tracer(..., background_export=True)`, o save sai do caminho da request e vai para um
 `_ExportWorker` (em `core/tracer.py`):
 
-- **fila limitada** (`queue.Queue(maxsize=...)`, default 10.000, env `TRACECAST_EXPORT_QUEUE`);
-- **um único worker daemon** consome a fila e executa `export` (1 consumidor → seguro para a conexão
-  não-thread-safe do psycopg2 e preserva ordem);
-- **enqueue não-bloqueante** (`put_nowait`): a request nunca espera o I/O;
-- **drop sob overload**: se a fila enche, o trace é descartado (best-effort, com log rate-limited) em
-  vez de crescer indefinidamente — **o app não trava nem dá OOM**;
-- `flush(timeout)` / `flush_exports(timeout)` drenam a fila (enfileiram um marcador e esperam); um
-  `atexit` enfileira um sentinela e dá join no worker para não perder dados no shutdown gracioso.
+Padrão alinhado a Langfuse/LangSmith:
 
-Isso vale igual para apps sync e async (em ambos, o caminho da request só enfileira). Drivers async
-nativos (motor/asyncpg) são trabalho futuro — o worker com fila já resolve o "não bloquear / não cair".
+- **fila limitada** (default **100**, `TRACECAST_EXPORT_QUEUE`) + **1 worker daemon**;
+- **batch por contagem + tempo + bytes** (`TRACECAST_FLUSH_AT=10`, `TRACECAST_FLUSH_INTERVAL=1s`,
+  `TRACECAST_MAX_BATCH_BYTES=2MB`) — um bulk write em vez de N round-trips;
+- **serialize cedo** (`trace.to_dict()` no enqueue) para o GC liberar o objeto Trace;
+- **enqueue `put_nowait`** + **drop sob overload** (log rate-limited);
+- **sample client-side** (`sample_rate=` / `TRACECAST_SAMPLE_RATE`, default 1.0);
+- **payload bound** (`TRACECAST_MAX_PAYLOAD_CHARS=2000`);
+- `flush()` / `aflush()` / `atexit`;
+- métricas do dashboard limitadas (`TRACECAST_METRICS_MAX_TRACES=1000`) para não hidratar o mundo.
+
+Em produção: `Tracer(..., background_export=True)`. Sem isso, async ainda usa `create_task` sem bound.
 
 ### Tratamento de erro (`core/tracer.py:_handle_export_error`)
 Falha de export **nunca** é silenciosa nem derruba o app: loga em nível `ERROR` e chama o hook

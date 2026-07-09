@@ -138,11 +138,31 @@ class MongoExporter(BaseExporter):
         return list(self._snapshots.find(match, {"_id": 0}))
 
     def export(self, trace: Trace) -> None:
+        self.export_doc(trace.to_dict())
+
+    def export_doc(self, doc: dict) -> None:
         self._ensure_indexes()
-        doc = trace.to_dict()
-        doc["exported_at"] = datetime.now(timezone.utc)
-        doc = _filter_doc(doc, self._include, self._exclude)
-        self._collection.replace_one({"trace_id": doc["trace_id"]}, doc, upsert=True)
+        payload = dict(doc)
+        payload["exported_at"] = datetime.now(timezone.utc)
+        payload = _filter_doc(payload, self._include, self._exclude)
+        self._collection.replace_one({"trace_id": payload["trace_id"]}, payload, upsert=True)
+
+    def export_docs_batch(self, docs: List[dict]) -> None:
+        if not docs:
+            return
+        self._ensure_indexes()
+        from pymongo import ReplaceOne
+        now = datetime.now(timezone.utc)
+        ops = []
+        for doc in docs:
+            payload = dict(doc)
+            payload["exported_at"] = now
+            payload = _filter_doc(payload, self._include, self._exclude)
+            ops.append(ReplaceOne({"trace_id": payload["trace_id"]}, payload, upsert=True))
+        self._collection.bulk_write(ops, ordered=False)
+
+    def export_summary(self, summary: dict) -> None:
+        self.export_doc(summary)
 
     def query(
         self,

@@ -33,9 +33,23 @@ class JsonFileExporter(BaseExporter):
         self._exclude: Optional[Set[str]] = set(exclude_fields) if exclude_fields is not None else None
 
     def export(self, trace: Trace) -> None:
-        doc = _filter_dict(trace.to_dict(), self._include, self._exclude)
+        self.export_doc(trace.to_dict())
+
+    def export_doc(self, doc: dict) -> None:
+        payload = _filter_dict(doc, self._include, self._exclude)
         with self.path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(doc, default=str) + "\n")
+            f.write(json.dumps(payload, default=str) + "\n")
+
+    def export_docs_batch(self, docs: list) -> None:
+        if not docs:
+            return
+        with self.path.open("a", encoding="utf-8") as f:
+            for doc in docs:
+                payload = _filter_dict(doc, self._include, self._exclude)
+                f.write(json.dumps(payload, default=str) + "\n")
+
+    def export_summary(self, summary: dict) -> None:
+        self.export_doc(summary)
 
     async def aexport(self, trace: Trace) -> None:
         await asyncio.to_thread(self.export, trace)

@@ -207,13 +207,35 @@ class PostgresExporter(BaseExporter):
         return {k: v for k, v in full_row.items() if k in self._columns}
 
     def export(self, trace: Trace) -> None:
-        doc = trace.to_dict()
+        self.export_doc(trace.to_dict())
+
+    def export_doc(self, doc: dict) -> None:
         row = self._build_row(doc)
         conn = self._get_conn()
         with conn.cursor() as cur:
             cur.execute(self._insert_sql, row)
         if not self._autocommit:
             conn.commit()
+
+    def export_docs_batch(self, docs: list) -> None:
+        if not docs:
+            return
+        rows = [self._build_row(doc) for doc in docs]
+        conn = self._get_conn()
+        with conn.cursor() as cur:
+            cur.executemany(self._insert_sql, rows)
+        if not self._autocommit:
+            conn.commit()
+
+    def export_summary(self, summary: dict) -> None:
+        doc = dict(summary)
+        meta = dict(doc.get("metadata") or {})
+        meta["_export_status"] = doc.get("export_status", "summary_only")
+        meta["_is_summary"] = True
+        meta["_export_error"] = doc.get("export_error")
+        doc["metadata"] = meta
+        doc["spans"] = []
+        self.export_doc(doc)
 
     def _get_read_conn(self):
         if self._read_conn is None or self._read_conn.closed:

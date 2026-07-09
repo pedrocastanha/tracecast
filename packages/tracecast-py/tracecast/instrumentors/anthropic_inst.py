@@ -63,6 +63,7 @@ class AnthropicInstrumentor(BaseInstrumentor):
         from ..models.span import Span, SpanType
         from ..core.token_counter import extract_tokens, extract_content, extract_input_text
         from ..core.cost_calculator import calculate_cost
+        from ..core.payload import truncate_payload
 
         model = kwargs.get("model", "unknown")
         input_text = extract_input_text(kwargs, "anthropic")
@@ -74,7 +75,7 @@ class AnthropicInstrumentor(BaseInstrumentor):
             name=f"llm:{model}",
             model=model,
             started_at=datetime.now(timezone.utc),
-            input=input_text,
+            input=truncate_payload(input_text),
         )
 
         if kwargs.get("stream"):
@@ -98,7 +99,7 @@ class AnthropicInstrumentor(BaseInstrumentor):
         span.cost_usd = calculate_cost(
             model, span.tokens_in, span.tokens_out, tokens_in_cached=span.tokens_in_cached
         )
-        span.output = extract_content(response, "anthropic")
+        span.output = truncate_payload(extract_content(response, "anthropic"))
         trace.spans.append(span)
 
         return response
@@ -114,6 +115,7 @@ class AnthropicInstrumentor(BaseInstrumentor):
         from ..models.span import Span, SpanType
         from ..core.token_counter import extract_tokens, extract_content, extract_input_text
         from ..core.cost_calculator import calculate_cost
+        from ..core.payload import truncate_payload
 
         model = kwargs.get("model", "unknown")
         input_text = extract_input_text(kwargs, "anthropic")
@@ -125,7 +127,7 @@ class AnthropicInstrumentor(BaseInstrumentor):
             name=f"llm:{model}",
             model=model,
             started_at=datetime.now(timezone.utc),
-            input=input_text,
+            input=truncate_payload(input_text),
         )
 
         if kwargs.get("stream"):
@@ -149,6 +151,6 @@ class AnthropicInstrumentor(BaseInstrumentor):
         span.cost_usd = calculate_cost(
             model, span.tokens_in, span.tokens_out, tokens_in_cached=span.tokens_in_cached
         )
-        span.output = extract_content(response, "anthropic")
+        span.output = truncate_payload(extract_content(response, "anthropic"))
         trace.spans.append(span)
         return response

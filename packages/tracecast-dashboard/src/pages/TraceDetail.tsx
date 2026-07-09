@@ -158,6 +158,23 @@ export function TraceDetail() {
         <code style={{ fontSize: 11, color: "var(--text-faint)" }}>{t.trace_id}</code>
       </div>
 
+      {(t.is_summary || t.export_status === "summary_only") && (
+        <div style={{
+          marginBottom: 20, padding: "12px 16px",
+          border: "1px solid rgba(251,191,36,.4)", borderLeft: "3px solid var(--yellow)",
+          background: "rgba(251,191,36,.08)", borderRadius: "var(--radius-sm)",
+          color: "var(--text)", fontSize: 13, lineHeight: 1.5,
+        }}>
+          <strong style={{ color: "var(--yellow)" }}>Partial export</strong>
+          {" — full spans/payload were not saved. Showing date, tokens, project and type only."}
+          {t.export_error && (
+            <div style={{ marginTop: 6, fontFamily: "var(--mono)", fontSize: 11, color: "var(--text-muted)" }}>
+              {t.export_error}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Stat chips */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 24 }}>
         {t.model && <StatChip label="Model"   value={t.model}                     accent="var(--violet)" />}
@@ -166,6 +183,9 @@ export function TraceDetail() {
         <StatChip label="Tokens"  value={(t.total_tokens ?? 0).toLocaleString()}  accent="var(--accent)" />
         {t.total_tokens_in_cached > 0 && (
           <StatChip label="Cached" value={(t.total_tokens_in_cached ?? 0).toLocaleString()} accent="var(--green)" />
+        )}
+        {(t.project_id || t.project_name) && (
+          <StatChip label="Project" value={t.project_name || t.project_id} accent="var(--violet)" />
         )}
       </div>
 

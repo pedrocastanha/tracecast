@@ -15,6 +15,8 @@ interface TraceSummary {
   cost_usd: number;
   span_count: number;
   model: string | null;
+  is_summary?: boolean;
+  export_status?: string;
 }
 
 const inputStyle = { padding: "8px 12px", background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: "var(--radius-sm)", fontSize: 13 } as const;
@@ -106,7 +108,19 @@ export function Traces() {
                       style={{ cursor: "pointer" }}
                       onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
                       onMouseLeave={(e) => (e.currentTarget.style.background = "")}>
-                      <td style={{ ...td, fontWeight: 500 }}>{t.project_name ? `[${t.project_name}]-${t.name}` : t.name}</td>
+                      <td style={{ ...td, fontWeight: 500 }}>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                          {t.project_name ? `[${t.project_name}]-${t.name}` : t.name}
+                          {(t.is_summary || t.export_status === "summary_only") && (
+                            <span style={{
+                              fontSize: 10, fontFamily: "var(--mono)", fontWeight: 700,
+                              padding: "2px 7px", borderRadius: 4,
+                              background: "rgba(251,191,36,.12)", color: "var(--yellow)",
+                              border: "1px solid rgba(251,191,36,.35)", letterSpacing: "0.04em",
+                            }}>PARTIAL</span>
+                          )}
+                        </span>
+                      </td>
                       <td style={mono}>{new Date(t.started_at).toLocaleString()}</td>
                       <td style={mono}>{t.latency_ms != null ? (t.latency_ms < 1000 ? `${t.latency_ms}ms` : `${(t.latency_ms / 1000).toFixed(2)}s`) : "—"}</td>
                       <td style={mono}>{t.total_tokens_in.toLocaleString()} / {t.total_tokens_out.toLocaleString()}</td>

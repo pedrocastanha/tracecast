@@ -29,11 +29,21 @@ class DictExporter(BaseExporter):
         self.prompts: List[Dict[str, Any]] = []
 
     def export(self, trace: Trace) -> None:
-        doc = _filter_dict(trace.to_dict(), self._include, self._exclude)
+        self.export_doc(trace.to_dict())
+
+    def export_doc(self, doc: dict) -> None:
+        payload = _filter_dict(doc, self._include, self._exclude)
         if self._on_trace is not None:
-            self._on_trace(doc)
+            self._on_trace(payload)
         else:
-            self.traces.append(doc)
+            self.traces.append(payload)
+
+    def export_docs_batch(self, docs: list) -> None:
+        for doc in docs:
+            self.export_doc(doc)
+
+    def export_summary(self, summary: dict) -> None:
+        self.export_doc(summary)
 
     def export_eval(self, run) -> None:
         doc = run.to_dict()

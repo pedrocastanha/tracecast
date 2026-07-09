@@ -3,6 +3,21 @@ from typing import Any, List, Optional
 
 from ..models.span import Span
 from ..core.cost_calculator import calculate_cost
+from ..core.payload import max_payload_chars, truncate_payload
+
+
+def _append_capped(parts: List[str], piece: str) -> None:
+    """Stop buffering stream chunks once we already hold max_payload_chars."""
+    limit = max_payload_chars()
+    if limit < 0:
+        parts.append(piece)
+        return
+    if limit == 0:
+        return
+    held = sum(len(p) for p in parts)
+    if held >= limit:
+        return
+    parts.append(piece[: limit - held])
 
 
 def _finalize(span: Span, trace: Any, model: str, tokens_in: int, tokens_out: int,
@@ -13,7 +28,7 @@ def _finalize(span: Span, trace: Any, model: str, tokens_in: int, tokens_out: in
     span.tokens_in_cached = int(cached or 0)
     span.cost_usd = calculate_cost(model, span.tokens_in, span.tokens_out, tokens_in_cached=span.tokens_in_cached)
     if content_parts:
-        span.output = "".join(content_parts)
+        span.output = truncate_payload("".join(content_parts))
     trace.spans.append(span)
 
 
@@ -28,7 +43,7 @@ def _openai_chunk(chunk, content_parts: List[str], usage_holder: dict) -> None:
         delta = chunk.choices[0].delta
         piece = getattr(delta, "content", None)
         if piece:
-            content_parts.append(piece)
+            _append_capped(content_parts, piece)
     except (IndexError, AttributeError, TypeError):
         pass
 
@@ -69,7 +84,7 @@ def _anthropic_event(event, parts: List[str], usage_holder: dict) -> None:
     elif etype == "content_block_delta":
         piece = getattr(getattr(event, "delta", None), "text", None)
         if piece:
-            parts.append(piece)
+            _append_capped(parts, piece)
 
 
 def stream_anthropic(raw, span, trace, model):

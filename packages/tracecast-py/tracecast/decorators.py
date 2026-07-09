@@ -4,17 +4,11 @@ import uuid
 from datetime import datetime, timezone
 from typing import Callable, Optional, Any
 from .core.tracer import Tracer, activate_span
+from .core.payload import truncate_payload as _truncate
 from .models.span import Span, SpanType
 
 
 _default_tracer: Optional[Tracer] = None
-
-
-def _truncate(value: Any, limit: int = 2000) -> Optional[str]:
-    if value is None:
-        return None
-    text = value if isinstance(value, str) else repr(value)
-    return text if len(text) <= limit else text[:limit] + "..."
 
 
 def _capture(args: Any, kwargs: Any) -> Any:

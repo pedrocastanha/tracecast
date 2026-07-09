@@ -6,15 +6,12 @@ from ..core.tracer import Tracer
 from ..core.token_counter import _from_langchain_response
 from ..core.cost_calculator import calculate_cost
 from ..core.logger import TraceCastLogger
+from ..core.payload import truncate_payload
 from ..models.span import Span, SpanType
 
 
 def _stringify(value) -> Optional[str]:
-    if value is None:
-        return None
-    if isinstance(value, str):
-        return value
-    return str(value)
+    return truncate_payload(value)
 
 
 def _extract_generation_text(response) -> Optional[str]:
@@ -73,7 +70,7 @@ class TraceCastCallback(BaseCallbackHandler):
             name=f"llm:{model}",
             model=model,
             started_at=datetime.now(timezone.utc),
-            input="\n\n".join(str(p) for p in (prompts or [])) or None,
+            input=truncate_payload("\n\n".join(str(p) for p in (prompts or [])) or None),
         )
         if self._logger:
             self._logger.llm_start(self._trace_name(), model=model)
@@ -92,7 +89,7 @@ class TraceCastCallback(BaseCallbackHandler):
             name=f"llm:{model}",
             model=model,
             started_at=datetime.now(timezone.utc),
-            input=self._join_messages(messages),
+            input=truncate_payload(self._join_messages(messages)),
         )
         if self._logger:
             self._logger.llm_start(self._trace_name(), model=model)
@@ -148,7 +145,7 @@ class TraceCastCallback(BaseCallbackHandler):
             span.model, span.tokens_in, span.tokens_out,
             tokens_in_cached=span.tokens_in_cached,
         )
-        span.output = _extract_generation_text(response)
+        span.output = truncate_payload(_extract_generation_text(response))
         trace = self.tracer.current()
         if trace:
             trace.spans.append(span)
@@ -219,16 +216,30 @@ class TraceCastCallback(BaseCallbackHandler):
 
     def on_chain_start(self, serialized, inputs, **kwargs):
         run_id = str(kwargs.get("run_id", uuid.uuid4()))
-        name = self._chain_name(serialized or {}, kwarg_name=kwargs.get("name"))
         lg_meta = kwargs.get("metadata") or {}
-        is_node = bool(lg_meta.get("langgraph_node"))
+        lg_node = lg_meta.get("langgraph_node")
+        _noise_nodes = {"agent", "tools"}
+        if lg_node and str(lg_node) not in _noise_nodes:
+            name = str(lg_node)
+            meta = {"tc_display": True, "langgraph_node": str(lg_node)}
+        elif lg_node and str(lg_node) in _noise_nodes:
+            name = str(lg_node)
+            meta = {"langgraph_node": str(lg_node)}
+        else:
+            name = self._chain_name(serialized or {}, kwarg_name=kwargs.get("name"))
+            meta = {}
+            bare = name[6:] if name.startswith("chain:") else name
+            if bare.endswith("_node") or bare in {
+                "router", "service", "enrollment", "notify", "guard", "final_response", "direct_response",
+            }:
+                meta = {"tc_display": True}
         self._span_stack[run_id] = Span(
             span_id=run_id,
             parent_span_id=self._parent_id(kwargs),
             type=SpanType.AGENT,
             name=name,
             started_at=datetime.now(timezone.utc),
-            metadata={"tc_display": True} if is_node else {},
+            metadata=meta,
         )
         if self._logger and not kwargs.get("parent_run_id"):
             self._logger.chain_start(self._trace_name(), name=name)

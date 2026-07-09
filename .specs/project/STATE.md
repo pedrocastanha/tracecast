@@ -2,6 +2,49 @@
 
 > Decisões, blockers, lições. Atualizado a cada sessão.
 
+## Sessão 2026-07-09
+
+### Implementado (sem SDD formal prévio)
+- `background_export` real: fila limitada + worker + batch (flush_at / interval / max_batch_bytes)
+- Serialize cedo (`to_dict` no enqueue)
+- Truncate global de payload (`TRACECAST_MAX_PAYLOAD_CHARS`)
+- Sample rate (`TRACECAST_SAMPLE_RATE`)
+- Cap métricas hydrate (`TRACECAST_METRICS_MAX_TRACES`)
+- Suite ~416 passed
+
+### SDD criado — feature `export-resilience`
+Path: `.specs/features/export-resilience/{spec,design,tasks}.md`  
+PROJECT.md + ROADMAP.md criados em `.specs/project/`.
+
+**MVP pedido pelo user:** se full save falhar → ainda persistir **data, tokens, projeto, tipo/nome** (`export_status=summary_only`).  
+Também no SDD: retry+backoff, ExportStats + `/api/health`, UI badge/banner, P2 warn/projection, P3 overview card.
+
+**Status:** Specify + Design + Tasks prontos; **Execute T1–T16 implementados** (código + testes + e2e bot-captacao).
+
+### Execute progress — export-resilience
+| Task | Status |
+|------|--------|
+| T1–T16 | ✅ implementados (suite 434 passed) |
+| E2E bot-captacao | ✅ uvicorn + chat + dashboard (sem commit no bot) |
+
+### E2E notes (bot-captacao 2026-07-09)
+- Mongo remoto timeout → health mostra `export_retried` + `last_error`; dual JsonFile salvou full (33 spans).
+- `/tracecast/api/health` com bloco `export` + `background_export: true`.
+- Lista traces + detail + graph 200; SPA index/js/css 200.
+- Alterações locais no bot (não commitadas): `background_export=True`, dual JsonL, `TRACECAST_JSONL_PATH`.
+
+### span_filter=flow (2026-07-09)
+- `Tracer(span_filter=...)` / `TRACECAST_SPAN_FILTER` modes: all|flow|llm_tool
+- Captacao: 21→15 spans; flow `guard→router→service→final_guardrail→final_response` + LLMs c/ input/output
+- Atendimento: 22→20; nodes reais + LLMs; noise Runnable/Prompt/agent/tools removido
+- Bots: captacao + atendimento com flow default, logs de kept/dropped, dashboard montado
+- Mongo GCP ainda timeout da rede local; JSONL local + health OK
+
+### ADR-006 — Fallback summary no mesmo store (2026-07-09) [SPEC]
+**Decisão:** summary de export parcial vive na **mesma** collection/tabela/JSONL de traces, com `export_status=summary_only` e `spans=[]`, não store separado.  
+**Por quê:** listagem e contagem reusam `query`/`get`; operador vê o “buraco” com métricas mínimas.  
+**Consequência:** reader/UI precisam distinguir full vs summary; Postgres pode embutir flags em `metadata` se schema rígido.
+
 ## Decisões (ADR)
 
 ### ADR-001 — Python-only (2026-06-13)

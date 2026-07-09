@@ -6,6 +6,7 @@ from typing import Any, Callable, Optional, TypeVar
 from ..core.tracer import Tracer
 from ..core.token_counter import extract_tokens, extract_content, extract_input_text
 from ..core.cost_calculator import calculate_cost
+from ..core.payload import truncate_payload
 from ..models.span import Span, SpanType
 
 T = TypeVar("T")
@@ -30,7 +31,7 @@ def trace_llm_call(
         name=f"llm:{model}",
         model=model,
         started_at=datetime.now(timezone.utc),
-        input=input_text,
+        input=truncate_payload(input_text),
         metadata=metadata or {},
     )
 
@@ -63,7 +64,7 @@ def trace_llm_call(
         span.tokens_out,
         tokens_in_cached=span.tokens_in_cached,
     )
-    span.output = extract_content(response, provider)
+    span.output = truncate_payload(extract_content(response, provider))
     trace.spans.append(span)
 
     if logger:
@@ -102,7 +103,7 @@ async def _async_trace_llm_call(
         name=f"llm:{model}",
         model=model,
         started_at=datetime.now(timezone.utc),
-        input=input_text,
+        input=truncate_payload(input_text),
         metadata={},
     )
     tracer = _resolve_tracer()
@@ -131,7 +132,7 @@ async def _async_trace_llm_call(
         span.tokens_out,
         tokens_in_cached=span.tokens_in_cached,
     )
-    span.output = extract_content(response, provider)
+    span.output = truncate_payload(extract_content(response, provider))
     trace.spans.append(span)
 
     if logger:
