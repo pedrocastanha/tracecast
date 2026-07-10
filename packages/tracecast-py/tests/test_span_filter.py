@@ -62,6 +62,20 @@ def test_reparent_after_drop():
     assert by_id["llm"].parent_span_id == "root"
 
 
+def test_dedupe_duplicate_nodes():
+    a = _span("a1", "guard_node", langgraph_node="guard_node", tc_display=True)
+    a.finished_at = a.started_at
+    b = _span("a2", "guard_node", langgraph_node="guard_node", tc_display=True)
+    from datetime import timedelta
+    b.finished_at = b.started_at + timedelta(milliseconds=500)
+    c = _span("r1", "router", langgraph_node="router", tc_display=True)
+    c.finished_at = c.started_at + timedelta(seconds=2)
+    kept = filter_spans([a, b, c], "flow")
+    names = sorted(s.name for s in kept)
+    assert names == ["guard_node", "router_node"]
+    assert next(s for s in kept if s.name == "guard_node").span_id == "a2"
+
+
 def test_llm_tool_mode():
     node = _span("n", "router_node", langgraph_node="router_node", tc_display=True)
     llm = _span("l", "llm:x", SpanType.LLM)

@@ -234,6 +234,7 @@ def build_graph(trace: Trace) -> dict:
 
     curated = [s for s in valid_spans if _is_curated(s)]
     if curated:
+        curated = _dedupe_curated_by_name(curated)
         return _build_graph_curated(trace, valid_spans, curated)
 
     span_by_id = {s.span_id: s for s in valid_spans}
@@ -332,6 +333,35 @@ def build_graph(trace: Trace) -> dict:
         "total_tokens": total_in + total_out,
         "cost_usd": round(total_cost, 6),
     }
+
+
+def _dedupe_curated_by_name(curated: list) -> list:
+    """LangGraph often emits 2+ spans per node; keep the longest-lived per name."""
+    aliases = {
+        "router": "router_node",
+        "service": "service_node",
+        "guard": "guard_node",
+        "enrollment": "enrollment_node",
+        "notify": "notify_node",
+        "direct_response": "direct_response_node",
+    }
+    best = {}
+    for s in curated:
+        bare = s.name.split(":")[-1] if s.name else s.name
+        key = aliases.get(bare, bare)
+        prev = best.get(key)
+        if prev is None:
+            best[key] = s
+            if bare != key:
+                s.name = key
+            continue
+        prev_lat = prev.latency_ms if prev.latency_ms is not None else -1
+        cur_lat = s.latency_ms if s.latency_ms is not None else -1
+        if cur_lat >= prev_lat:
+            best[key] = s
+            if bare != key:
+                s.name = key
+    return list(best.values())
 
 
 def _build_graph_curated(trace: Trace, valid_spans: list, curated: list) -> dict:

@@ -1,14 +1,19 @@
 """Data access layer for dashboard. Reads traces from configured exporters."""
 
 import json
+import logging
+import time
 from pathlib import Path
 from typing import List, Optional, Callable, Any
 from ..models.trace import Trace
 from ..models.span import Span, SpanType, SpanStatus
 from datetime import datetime, timedelta, timezone
 
+_logger = logging.getLogger("tracecast")
+
 DEFAULT_METRICS_WINDOW = timedelta(hours=24)
 DEFAULT_METRICS_MAX_TRACES = 1000
+_DEAD_EXPORTER_TTL = 60.0
 
 
 def _metrics_max_traces() -> int:
@@ -31,16 +36,38 @@ class TraceReader:
         self._cache_ttl = 5.0
         self._last_read = 0.0
         self.export_stats_provider: Optional[Callable[[], dict]] = None
+        self._dead_until: dict = {}
+
+    def _mark_dead(self, exporter) -> None:
+        self._dead_until[id(exporter)] = time.monotonic() + _DEAD_EXPORTER_TTL
+        _logger.warning(
+            "TraceCast: exporter %s marked unavailable for %.0fs (read path will skip it)",
+            type(exporter).__name__,
+            _DEAD_EXPORTER_TTL,
+        )
+
+    def _is_alive(self, exporter) -> bool:
+        until = self._dead_until.get(id(exporter))
+        if until is None:
+            return True
+        if time.monotonic() >= until:
+            self._dead_until.pop(id(exporter), None)
+            return True
+        return False
 
     def get_traces(self) -> List[Trace]:
-        import time
         now = time.time()
         if self._cache is not None and (now - self._last_read) < self._cache_ttl:
             return self._cache
 
         traces: List[Trace] = []
         for exporter in self._exporters:
-            traces.extend(self._read_from(exporter))
+            if not self._is_alive(exporter):
+                continue
+            try:
+                traces.extend(self._read_from(exporter))
+            except Exception:
+                self._mark_dead(exporter)
 
         traces.sort(key=lambda t: t.started_at, reverse=True)
         if len(traces) > self._max_traces:
@@ -52,9 +79,18 @@ class TraceReader:
 
     def _readable(self):
         for exporter in self._exporters:
+            if not self._is_alive(exporter):
+                continue
             if callable(getattr(exporter, "query", None)):
                 return exporter
         return None
+
+    def _queryable(self):
+        for exporter in self._exporters:
+            if not self._is_alive(exporter):
+                continue
+            if callable(getattr(exporter, "query", None)):
+                yield exporter
 
     def query_page(
         self,
@@ -70,23 +106,23 @@ class TraceReader:
         sort_by: str = "date",
         order: str = "desc",
     ):
-        exporter = self._readable()
-        if exporter is None:
-            return None
         offset = (max(page, 1) - 1) * page_size
-        try:
-            rows = exporter.query(
-                project_name=project_name, project_id=project_id, user_id=user_id, session_id=session_id,
-                from_dt=from_dt, to_dt=to_dt,
-                limit=page_size, offset=offset, sort_by=sort_by, order=order,
-            )
-            total = exporter.count(
-                project_name=project_name, project_id=project_id, user_id=user_id, session_id=session_id,
-                from_dt=from_dt, to_dt=to_dt,
-            )
-        except Exception:
-            return None
-        return [_hydrate_trace(_strip_span_payloads(r)) for r in rows], total
+        for exporter in self._queryable():
+            try:
+                rows = exporter.query(
+                    project_name=project_name, project_id=project_id, user_id=user_id, session_id=session_id,
+                    from_dt=from_dt, to_dt=to_dt,
+                    limit=page_size, offset=offset, sort_by=sort_by, order=order,
+                )
+                total = exporter.count(
+                    project_name=project_name, project_id=project_id, user_id=user_id, session_id=session_id,
+                    from_dt=from_dt, to_dt=to_dt,
+                )
+                return [_hydrate_trace(_strip_span_payloads(r)) for r in rows], total
+            except Exception:
+                self._mark_dead(exporter)
+                continue
+        return None
 
     def get_traces_for_metrics(
         self,
@@ -95,25 +131,25 @@ class TraceReader:
         from_dt: Optional[datetime] = None,
         to_dt: Optional[datetime] = None,
     ) -> List[Trace]:
-        exporter = self._readable()
-        if exporter is None:
-            return self.get_traces()
         unfiltered = project_name is None and project_id is None and from_dt is None and to_dt is None
         if unfiltered:
             from_dt = datetime.now(timezone.utc) - DEFAULT_METRICS_WINDOW
-        try:
-            total = exporter.count(project_name=project_name, project_id=project_id, from_dt=from_dt, to_dt=to_dt)
-            if total <= 0:
-                return []
-            cap = _metrics_max_traces()
-            rows = exporter.query(
-                project_name=project_name, project_id=project_id,
-                from_dt=from_dt, to_dt=to_dt,
-                limit=min(total, cap), offset=0,
-            )
-            return [_hydrate_trace(r) for r in rows]
-        except Exception:
-            return self.get_traces()
+        for exporter in self._queryable():
+            try:
+                total = exporter.count(project_name=project_name, project_id=project_id, from_dt=from_dt, to_dt=to_dt)
+                if total <= 0:
+                    return []
+                cap = _metrics_max_traces()
+                rows = exporter.query(
+                    project_name=project_name, project_id=project_id,
+                    from_dt=from_dt, to_dt=to_dt,
+                    limit=min(total, cap), offset=0,
+                )
+                return [_hydrate_trace(r) for r in rows]
+            except Exception:
+                self._mark_dead(exporter)
+                continue
+        return self.get_traces()
 
     def get_metrics_totals(
         self,
@@ -156,10 +192,14 @@ class TraceReader:
 
         snap_to_day = min(to_dt.date(), cutoff_day - timedelta(days=1))
         if from_dt.date() <= snap_to_day:
-            snaps = exporter.query_snapshots(
-                from_date=from_dt.date(), to_date=snap_to_day,
-                project_id=project_id, project_name=project_name,
-            )
+            try:
+                snaps = exporter.query_snapshots(
+                    from_date=from_dt.date(), to_date=snap_to_day,
+                    project_id=project_id, project_name=project_name,
+                )
+            except Exception:
+                self._mark_dead(exporter)
+                snaps = []
             for s in snaps:
                 total_traces += s["trace_count"]
                 total_tokens_in += s["total_tokens_in"]
@@ -186,14 +226,18 @@ class TraceReader:
         }
 
     def get_trace(self, trace_id: str) -> Optional[Trace]:
-        exporter = self._readable()
-        if exporter is not None and callable(getattr(exporter, "get", None)):
+        for exporter in self._exporters:
+            if not self._is_alive(exporter):
+                continue
+            if not callable(getattr(exporter, "get", None)):
+                continue
             try:
                 doc = exporter.get(trace_id)
                 if doc:
                     return _hydrate_trace(doc)
             except Exception:
-                pass
+                self._mark_dead(exporter)
+                continue
         for t in self.get_traces():
             if t.trace_id == trace_id:
                 return t
@@ -215,11 +259,14 @@ class TraceReader:
         )
 
     def get_session(self, session_id: str) -> List[Trace]:
-        exporter = self._readable()
-        if exporter is None:
-            return [t for t in self.get_traces() if t.session_id == session_id]
-        rows = exporter.query(session_id=session_id, limit=self._max_traces, offset=0)
-        return [_hydrate_trace(r) for r in rows]
+        for exporter in self._queryable():
+            try:
+                rows = exporter.query(session_id=session_id, limit=self._max_traces, offset=0)
+                return [_hydrate_trace(r) for r in rows]
+            except Exception:
+                self._mark_dead(exporter)
+                continue
+        return [t for t in self.get_traces() if t.session_id == session_id]
 
     def get_projects(self) -> list:
         from .aggregator import compute_projects

@@ -118,13 +118,81 @@ def should_keep_span(span: Span, mode: SpanFilterMode) -> bool:
     return False
 
 
+_NODE_ALIASES = {
+    "router": "router_node",
+    "service": "service_node",
+    "guard": "guard_node",
+    "enrollment": "enrollment_node",
+    "notify": "notify_node",
+    "direct_response": "direct_response_node",
+    "final_response": "final_response",
+}
+
+
+def _dedupe_key(span: Span) -> str:
+    bare = bare_span_name(span.name)
+    if span.type in (SpanType.LLM, SpanType.TOOL, SpanType.EMBEDDING, SpanType.AUDIO):
+        return f"{span.type.value}:{span.span_id}"
+    return _NODE_ALIASES.get(bare, bare)
+
+
+def _span_rank(span: Span) -> tuple:
+    lat = span.latency_ms if span.latency_ms is not None else -1
+    has_io = 1 if (span.input or span.output) else 0
+    return (lat, has_io)
+
+
+def dedupe_flow_spans(spans: List[Span]) -> List[Span]:
+    """Collapse duplicate agent/node spans (LangGraph often emits 2+ per node)."""
+    best: dict = {}
+    losers: dict = {}
+    passthrough: List[Span] = []
+
+    for span in spans:
+        if span.type != SpanType.AGENT:
+            passthrough.append(span)
+            continue
+        key = _dedupe_key(span)
+        prev = best.get(key)
+        if prev is None:
+            best[key] = span
+            continue
+        if _span_rank(span) >= _span_rank(prev):
+            losers[prev.span_id] = span.span_id
+            best[key] = span
+        else:
+            losers[span.span_id] = prev.span_id
+
+    kept = passthrough + list(best.values())
+    keep_ids = {s.span_id for s in kept}
+
+    def _resolve(sid: Optional[str]) -> Optional[str]:
+        seen: Set[str] = set()
+        while sid and sid in losers and sid not in seen:
+            seen.add(sid)
+            sid = losers[sid]
+        return sid
+
+    for span in kept:
+        span.parent_span_id = _resolve(span.parent_span_id)
+        bare = bare_span_name(span.name)
+        canon = _NODE_ALIASES.get(bare)
+        if canon and span.type == SpanType.AGENT and bare != canon:
+            span.name = canon
+
+    return kept
+
+
 def filter_spans(spans: List[Span], mode: SpanFilterMode) -> List[Span]:
     if mode == "all" or not spans:
         return spans
 
     kept: List[Span] = [s for s in spans if should_keep_span(s, mode)]
+    if mode == "flow":
+        kept = dedupe_flow_spans(kept)
+
     dropped = len(spans) - len(kept)
-    if dropped <= 0:
+    if dropped <= 0 and mode != "flow":
         return kept
 
     by_id = {s.span_id: s for s in spans}
@@ -146,7 +214,7 @@ def filter_spans(spans: List[Span], mode: SpanFilterMode) -> List[Span]:
         "TraceCast: span_filter=%s kept=%d dropped=%d names_kept=%s",
         mode,
         len(kept),
-        dropped,
+        dropped if dropped > 0 else len(spans) - len(kept),
         [s.name for s in kept[:20]],
     )
     return kept
