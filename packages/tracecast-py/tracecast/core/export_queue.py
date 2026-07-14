@@ -112,11 +112,28 @@ class _FlushMarker:
         self.event = threading.Event()
 
 
-class ExportWorker:
-    """Bounded in-memory queue + dedicated drain thread + optional JSONL spool.
+def default_overflow_queue_size(main_maxsize: int) -> int:
+    """Secondary buffer for disk-spool handoff — still bounded, never blocks request path."""
+    raw = os.environ.get("TRACECAST_EXPORT_OVERFLOW")
+    if raw is not None and str(raw).strip() != "":
+        try:
+            return max(1, int(raw))
+        except ValueError:
+            pass
+    # At least as large as main queue (and ≥256) so brief export stalls
+    # hand off to spool thread without dropping; hard cap for RAM.
+    return max(1, min(5000, max(main_maxsize, 256)))
 
-    Request path only does ``put_nowait`` (or spool append). Serialize/export
-    always runs on the worker thread — never on the ASGI event loop.
+
+class ExportWorker:
+    """Bounded export buffer with **hard latency guarantee on request path**.
+
+    Request / ASGI path does **only** ``queue.put_nowait``:
+      1) main export queue
+      2) if full and spool enabled → overflow queue (still put_nowait)
+      3) if overflow full → drop counter (never block the user message)
+
+    Serialize, disk spool I/O, HTTP/Mongo all run on daemon worker threads.
     """
 
     def __init__(
@@ -130,6 +147,7 @@ class ExportWorker:
         on_drop: Optional[Callable[[Any], None]] = None,
         spool_path: Optional[str] = None,
         spool_poll: float = 1.0,
+        overflow_maxsize: Optional[int] = None,
     ):
         if maxsize < 1:
             raise ValueError("export queue maxsize must be >= 1")
@@ -154,6 +172,16 @@ class ExportWorker:
         self._spool_poll = max(0.2, float(spool_poll))
         self._spool_stop = threading.Event()
         self._spool_thread: Optional[threading.Thread] = None
+        # Overflow: hold Trace refs briefly until spool thread writes JSONL.
+        # Never serialize/disk on the calling (request) thread.
+        osize = (
+            overflow_maxsize
+            if overflow_maxsize is not None
+            else default_overflow_queue_size(maxsize)
+        )
+        self._overflow: Optional[queue.Queue] = (
+            queue.Queue(maxsize=max(1, osize)) if self._spool_path else None
+        )
         if self._spool_path:
             Path(self._spool_path).parent.mkdir(parents=True, exist_ok=True)
 
@@ -190,25 +218,35 @@ class ExportWorker:
                 self._atexit_registered = True
 
     def enqueue(self, item: Any) -> bool:
-        """Non-blocking. True if accepted to memory or durable spool."""
+        """Non-blocking. Never waits on disk, network, or locks held by exporters.
+
+        Latency budget on caller: a few microseconds for put_nowait.
+        """
         self.start()
         try:
             self._q.put_nowait(item)
             return True
         except queue.Full:
-            if self._append_spool(item):
+            pass
+        # Main full → overflow handoff for async spool (still non-blocking).
+        if self._overflow is not None:
+            try:
+                self._overflow.put_nowait(item)
                 self._spooled += 1
                 return True
-            self._dropped += 1
-            self._log_drop(item)
-            if self._on_drop is not None:
-                try:
-                    self._on_drop(item)
-                except Exception:
-                    pass
-            return False
+            except queue.Full:
+                pass
+        self._dropped += 1
+        self._log_drop(item)
+        if self._on_drop is not None:
+            try:
+                self._on_drop(item)
+            except Exception:
+                pass
+        return False
 
     def _append_spool(self, item: Any) -> bool:
+        """Disk write — **worker thread only**, never request path."""
         if not self._spool_path:
             return False
         try:
@@ -221,8 +259,25 @@ class ExportWorker:
             _logger.warning("TraceCast: export spool write failed: %s", exc)
             return False
 
+    def _flush_overflow_to_spool(self) -> None:
+        if self._overflow is None:
+            return
+        while True:
+            try:
+                item = self._overflow.get_nowait()
+            except queue.Empty:
+                break
+            if not self._append_spool(item):
+                # Last resort: try main queue again; else count drop.
+                try:
+                    self._q.put_nowait(item)
+                except queue.Full:
+                    self._dropped += 1
+                    self._log_drop(item)
+
     def _spool_loop(self) -> None:
         while not self._spool_stop.wait(self._spool_poll):
+            self._flush_overflow_to_spool()
             self._drain_spool_once()
 
     def _drain_spool_once(self) -> None:
@@ -277,6 +332,7 @@ class ExportWorker:
     def flush(self, timeout: Optional[float] = None) -> bool:
         if not self._started:
             return True
+        self._flush_overflow_to_spool()
         self._drain_spool_once()
         marker = _FlushMarker()
         deadline = None if timeout is None else time.monotonic() + timeout
@@ -302,6 +358,7 @@ class ExportWorker:
         self._spool_stop.set()
         if self._spool_thread is not None:
             self._spool_thread.join(timeout=min(2.0, timeout))
+        self._flush_overflow_to_spool()
         self._drain_spool_once()
         deadline = time.monotonic() + timeout
         while True:

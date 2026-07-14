@@ -190,8 +190,8 @@ class Tracer:
             return
         if self._export_worker is not None:
             self._schedule_online_eval(trace)
-            # Enqueue live Trace — serialize happens on export worker thread.
-            # Request path stays O(1) put_nowait (or spool append).
+            # Enqueue live Trace — serialize/HTTP/disk only on worker threads.
+            # Request path: put_nowait only (never blocks user message latency).
             self._export_worker.enqueue(trace)
             return
         self._export(trace)
