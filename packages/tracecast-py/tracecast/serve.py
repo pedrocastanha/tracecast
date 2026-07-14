@@ -37,6 +37,11 @@ def _parse_auth(value: Optional[str]):
     return (user, password)
 
 
+def _enable_ingest() -> bool:
+    raw = os.environ.get("TRACECAST_INGEST", "1").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
 def serve_from_env() -> None:
     dsn = os.environ.get("TRACECAST_STORE")
     if not dsn:
@@ -61,6 +66,20 @@ def serve_from_env() -> None:
     from .dashboard.standalone import serve_dashboard
 
     reader = TraceReader([exporter], max_traces=max_traces)
+
+    if _enable_ingest():
+        from .core.ingest import IngestService
+
+        def _store_write(docs):
+            exporter.export_docs_batch(docs)
+
+        ingest = IngestService(_store_write)
+        reader.ingest = ingest
+        print(
+            f"TraceCast ingest ON  queue={ingest.health().get('queue_max')} "
+            f"spool={ingest.health().get('spool_path') or 'off'}"
+        )
+
     serve_dashboard(
         reader, host=host, port=port, prefix=prefix,
         auth=auth, cors_origins=cors_origins,

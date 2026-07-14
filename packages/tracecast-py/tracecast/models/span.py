@@ -38,7 +38,7 @@ class Span:
 
     @property
     def latency_ms(self) -> Optional[int]:
-        if self.finished_at:
+        if self.finished_at and self.started_at:
             delta = self.finished_at - self.started_at
             return int(delta.total_seconds() * 1000)
         return None
@@ -68,7 +68,7 @@ class Span:
             "latency_ms": self.latency_ms,
             "input": self.input,
             "output": self.output,
-            "started_at": self.started_at.isoformat(),
+            "started_at": self.started_at.isoformat() if self.started_at else None,
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
             "metadata": self.metadata,
         }

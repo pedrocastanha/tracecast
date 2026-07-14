@@ -1,6 +1,7 @@
 from .base import BaseExporter
 from .json_file import JsonFileExporter
 from .dict_exporter import DictExporter
+from .http import HttpExporter
 
 try:
     from .mongo import MongoExporter
@@ -12,4 +13,11 @@ try:
 except ImportError:
     PostgresExporter = None
 
-__all__ = ["BaseExporter", "JsonFileExporter", "DictExporter", "MongoExporter", "PostgresExporter"]
+__all__ = [
+    "BaseExporter",
+    "JsonFileExporter",
+    "DictExporter",
+    "HttpExporter",
+    "MongoExporter",
+    "PostgresExporter",
+]

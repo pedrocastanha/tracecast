@@ -1,11 +1,13 @@
 """FastAPI APIRouter serving dashboard REST API and static files."""
 
 try:
-    from fastapi import APIRouter, Query, HTTPException
-    from fastapi.responses import HTMLResponse, Response
+    from fastapi import APIRouter, Query, HTTPException, Request
+    from fastapi.responses import HTMLResponse, Response, JSONResponse
     HAS_FASTAPI = True
 except ImportError:
     HAS_FASTAPI = False
+    Request = None  # type: ignore
+    JSONResponse = None  # type: ignore
 
 import json
 from pathlib import Path
@@ -169,6 +171,7 @@ def _make_router(reader: TraceReader, prefix: str = "") -> "APIRouter":
             "version": "0.3.0",
             "exporter": type(reader._exporters[0]).__name__ if reader._exporters else "none",
             "export": None,
+            "ingest": None,
         }
         provider = getattr(reader, "export_stats_provider", None)
         if callable(provider):
@@ -176,7 +179,44 @@ def _make_router(reader: TraceReader, prefix: str = "") -> "APIRouter":
                 body["export"] = provider()
             except Exception:
                 body["export"] = {"error": "stats_unavailable"}
+        ingest = getattr(reader, "ingest", None)
+        if ingest is not None and hasattr(ingest, "health"):
+            try:
+                body["ingest"] = ingest.health()
+            except Exception:
+                body["ingest"] = {"enabled": True, "error": "stats_unavailable"}
         return body
+
+    def _ingest_response(docs: list):
+        ingest = getattr(reader, "ingest", None)
+        if ingest is None:
+            raise HTTPException(status_code=503, detail="ingest disabled on this server")
+        if not docs:
+            raise HTTPException(status_code=400, detail="no valid traces in body")
+        # Soft body guard: reject absurd batches early.
+        if len(docs) > 200:
+            raise HTTPException(status_code=413, detail="batch too large (max 200 traces)")
+        result = ingest.accept(docs)
+        status = 202 if result.get("accepted", 0) > 0 else 503
+        return JSONResponse(status_code=status, content=result)
+
+    @router.post("/api/ingest")
+    async def api_ingest(request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="invalid JSON body")
+        from ..core.ingest import normalize_ingest_body
+        return _ingest_response(normalize_ingest_body(body))
+
+    @router.post("/api/ingest/batch")
+    async def api_ingest_batch(request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="invalid JSON body")
+        from ..core.ingest import normalize_ingest_body
+        return _ingest_response(normalize_ingest_body(body))
 
     @router.get("/", response_class=HTMLResponse)
     def dashboard_index():

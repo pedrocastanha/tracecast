@@ -106,7 +106,7 @@ class Tracer:
     def _warn_if_sync_persistent(self) -> None:
         if self.background_export:
             return
-        risky = {"MongoExporter", "PostgresExporter", "JsonFileExporter"}
+        risky = {"MongoExporter", "PostgresExporter", "JsonFileExporter", "HttpExporter"}
         names = {type(e).__name__ for e in self.exporters}
         if names & risky:
             import warnings
@@ -127,9 +127,13 @@ class Tracer:
             snap["queue_size"] = self._export_worker.qsize()
             snap["queue_max"] = self._export_worker.maxsize
             snap["queue_dropped"] = max(snap["queue_dropped"], self._export_worker.dropped)
+            snap["queue_spooled"] = getattr(self._export_worker, "spooled", 0)
+            snap["spool_path"] = getattr(self._export_worker, "_spool_path", None)
         else:
             snap["queue_size"] = 0
             snap["queue_max"] = 0
+            snap["queue_spooled"] = 0
+            snap["spool_path"] = None
         return snap
 
     @staticmethod
@@ -186,7 +190,9 @@ class Tracer:
             return
         if self._export_worker is not None:
             self._schedule_online_eval(trace)
-            self._export_worker.enqueue(trace.to_dict())
+            # Enqueue live Trace — serialize happens on export worker thread.
+            # Request path stays O(1) put_nowait (or spool append).
+            self._export_worker.enqueue(trace)
             return
         self._export(trace)
 
@@ -262,8 +268,8 @@ class Tracer:
                 pass
             elif self._export_worker is not None:
                 self._schedule_online_eval(t)
-                doc = await asyncio.to_thread(t.to_dict)
-                self._export_worker.enqueue(doc)
+                # No to_dict on event loop — worker serializes off-loop.
+                self._export_worker.enqueue(t)
             elif self.blocking_export:
                 await self._aexport(t)
             else:
@@ -431,6 +437,7 @@ class Tracer:
         from ..dashboard.reader import TraceReader
         reader = TraceReader(self.exporters, max_traces=max_traces, retention_days=self.retention_days)
         reader.export_stats_provider = self.export_health
+        self._attach_ingest(reader)
 
         try:
             from fastapi import FastAPI
@@ -479,6 +486,32 @@ class Tracer:
         )
         return middleware
 
+    def _attach_ingest(self, reader) -> None:
+        """Enable POST /api/ingest on this reader when env allows and exporters exist."""
+        raw = os.environ.get("TRACECAST_INGEST", "1").strip().lower()
+        if raw in ("0", "false", "no", "off"):
+            return
+        if not self.exporters:
+            return
+        # Avoid double-attach
+        if getattr(reader, "ingest", None) is not None:
+            return
+        from .ingest import IngestService
+
+        exporters = list(self.exporters)
+
+        def _store_write(docs):
+            for exp in exporters:
+                try:
+                    exp.export_docs_batch(docs)
+                except Exception:
+                    # Per-exporter: best effort; IngestService catches total failure
+                    raise
+
+        reader.ingest = IngestService(_store_write)
+        # Keep handle for flush/shutdown if needed later
+        self._ingest_service = reader.ingest
+
     def serve(
         self,
         host: str = "127.0.0.1",
@@ -489,4 +522,6 @@ class Tracer:
         from ..dashboard.reader import TraceReader
         from ..dashboard.standalone import serve_dashboard
         reader = TraceReader(self.exporters, max_traces=max_traces)
+        reader.export_stats_provider = self.export_health
+        self._attach_ingest(reader)
         serve_dashboard(reader, host=host, port=port, prefix=prefix)

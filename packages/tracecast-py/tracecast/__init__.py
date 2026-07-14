@@ -10,6 +10,7 @@ from .prompts import create_prompt, get_prompt, set_label, PromptVersion
 from .integrations.llm import trace_llm_call, wrap_openai, wrap_anthropic
 from .instrument import auto_instrument, instrument_openai
 from .exporters.dict_exporter import DictExporter
+from .exporters.http import HttpExporter
 
 __all__ = [
     "Tracer", "bind_context", "calculate_cost",
@@ -18,5 +19,5 @@ __all__ = [
     "trace_cast", "trace_span", "set_default_tracer", "score",
     "create_prompt", "get_prompt", "set_label", "PromptVersion",
     "trace_llm_call", "wrap_openai", "wrap_anthropic",
-    "auto_instrument", "instrument_openai", "DictExporter",
+    "auto_instrument", "instrument_openai", "DictExporter", "HttpExporter",
 ]

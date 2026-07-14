@@ -24,7 +24,7 @@ def _build_app(
         app.add_middleware(
             CORSMiddleware,
             allow_origins=cors_origins,
-            allow_methods=["GET"],
+            allow_methods=["GET", "POST", "OPTIONS"],
             allow_headers=["*"],
         )
 

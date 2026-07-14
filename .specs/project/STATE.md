@@ -2,6 +2,35 @@
 
 > Decisões, blockers, lições. Atualizado a cada sessão.
 
+## Sessão 2026-07-14 — light-http-ingest + queue/spool
+
+### Problema
+VM 2vCPU/4GB (vm-aitracing-dev) sufoca com N bots → Mongo direto; request path bloqueava.
+
+### Arquitetura nova (v0.3.0)
+```
+Bot request → finalize + span_filter(llm_tool)
+  → put_nowait fila local (background_export)  [O(1), não bloqueia]
+  → worker thread: serialize + batch POST HttpExporter
+  → VM POST /api/ingest → fila server (1000) + spool JSONL
+  → worker: bulk_write Mongo
+  → dashboard lê Mongo
+```
+
+### Entregue
+- `HttpExporter` (stdlib urllib, timeout 2s)
+- `IngestService` + `POST /api/ingest` + `/api/ingest/batch` + health.ingest
+- Client `ExportWorker` spool opcional (`TRACECAST_EXPORT_SPOOL`)
+- Serialize no worker thread (não no request/event loop)
+- Deploy VM `/home/pcastanheira/ai-tracing` wheel 0.3.0
+- Consumers atualizados (sem commit): captacao, clara, atendimento, transferencia setup
+- Load test: 300 concurrent POSTs → 300/300 202, 0 drop, exported_ok=301, list total 304
+
+### Env prod bot
+- `TRACECAST_HTTP_URL=http://136.115.42.200:8010/tracecast`
+- `TRACECAST_SPAN_FILTER=llm_tool`
+- `background_export=True` (no setup)
+
 ## Sessão 2026-07-09
 
 ### Implementado (sem SDD formal prévio)

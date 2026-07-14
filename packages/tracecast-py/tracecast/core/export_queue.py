@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import atexit
+import json
 import logging
 import os
 import queue
 import threading
 import time
+from pathlib import Path
 from typing import Any, Callable, List, Optional
 
 _logger = logging.getLogger("tracecast")
@@ -58,6 +60,13 @@ def default_max_batch_bytes() -> int:
         return DEFAULT_MAX_BATCH_BYTES
 
 
+def default_export_spool_path() -> Optional[str]:
+    raw = os.environ.get("TRACECAST_EXPORT_SPOOL")
+    if raw is None or str(raw).strip() == "":
+        return None
+    return str(raw).strip()
+
+
 def approx_trace_bytes(item: Any) -> int:
     if isinstance(item, dict):
         n = 512
@@ -86,6 +95,16 @@ def approx_trace_bytes(item: Any) -> int:
     return n
 
 
+def item_to_doc(item: Any) -> Any:
+    """Normalize Trace → dict on the worker thread. Pass through other types."""
+    if isinstance(item, dict):
+        return item
+    to_dict = getattr(item, "to_dict", None)
+    if callable(to_dict):
+        return to_dict()
+    return item
+
+
 class _FlushMarker:
     __slots__ = ("event",)
 
@@ -94,6 +113,12 @@ class _FlushMarker:
 
 
 class ExportWorker:
+    """Bounded in-memory queue + dedicated drain thread + optional JSONL spool.
+
+    Request path only does ``put_nowait`` (or spool append). Serialize/export
+    always runs on the worker thread — never on the ASGI event loop.
+    """
+
     def __init__(
         self,
         export_batch_fn: Callable[[List[Any]], None],
@@ -103,6 +128,8 @@ class ExportWorker:
         max_batch_bytes: int = DEFAULT_MAX_BATCH_BYTES,
         name: str = "tracecast-export",
         on_drop: Optional[Callable[[Any], None]] = None,
+        spool_path: Optional[str] = None,
+        spool_poll: float = 1.0,
     ):
         if maxsize < 1:
             raise ValueError("export queue maxsize must be >= 1")
@@ -119,8 +146,16 @@ class ExportWorker:
         self._started = False
         self._start_lock = threading.Lock()
         self._dropped = 0
+        self._spooled = 0
+        self._spool_drained = 0
         self._last_drop_log = 0.0
         self._atexit_registered = False
+        self._spool_path = spool_path if spool_path is not None else default_export_spool_path()
+        self._spool_poll = max(0.2, float(spool_poll))
+        self._spool_stop = threading.Event()
+        self._spool_thread: Optional[threading.Thread] = None
+        if self._spool_path:
+            Path(self._spool_path).parent.mkdir(parents=True, exist_ok=True)
 
     @property
     def maxsize(self) -> int:
@@ -129,6 +164,10 @@ class ExportWorker:
     @property
     def dropped(self) -> int:
         return self._dropped
+
+    @property
+    def spooled(self) -> int:
+        return self._spooled
 
     def qsize(self) -> int:
         return self._q.qsize()
@@ -139,16 +178,27 @@ class ExportWorker:
                 return
             self._thread.start()
             self._started = True
+            if self._spool_path and self._spool_thread is None:
+                self._spool_thread = threading.Thread(
+                    target=self._spool_loop,
+                    name=f"{self._thread.name}-spool",
+                    daemon=True,
+                )
+                self._spool_thread.start()
             if not self._atexit_registered:
                 atexit.register(self.shutdown)
                 self._atexit_registered = True
 
     def enqueue(self, item: Any) -> bool:
+        """Non-blocking. True if accepted to memory or durable spool."""
         self.start()
         try:
             self._q.put_nowait(item)
             return True
         except queue.Full:
+            if self._append_spool(item):
+                self._spooled += 1
+                return True
             self._dropped += 1
             self._log_drop(item)
             if self._on_drop is not None:
@@ -158,9 +208,76 @@ class ExportWorker:
                     pass
             return False
 
+    def _append_spool(self, item: Any) -> bool:
+        if not self._spool_path:
+            return False
+        try:
+            doc = item_to_doc(item)
+            line = json.dumps(doc, default=str, ensure_ascii=False)
+            with open(self._spool_path, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+            return True
+        except Exception as exc:
+            _logger.warning("TraceCast: export spool write failed: %s", exc)
+            return False
+
+    def _spool_loop(self) -> None:
+        while not self._spool_stop.wait(self._spool_poll):
+            self._drain_spool_once()
+
+    def _drain_spool_once(self) -> None:
+        path = self._spool_path
+        if not path or not os.path.exists(path):
+            return
+        try:
+            if os.path.getsize(path) == 0:
+                return
+        except OSError:
+            return
+        free = self._maxsize - self._q.qsize()
+        if free < 1:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+        except OSError as exc:
+            _logger.warning("TraceCast: export spool read failed: %s", exc)
+            return
+        kept: List[str] = []
+        moved = 0
+        for line in lines:
+            raw = line.strip()
+            if not raw:
+                continue
+            if moved >= free:
+                kept.append(line if line.endswith("\n") else line + "\n")
+                continue
+            try:
+                doc = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            try:
+                self._q.put_nowait(doc)
+                moved += 1
+                self._spool_drained += 1
+            except queue.Full:
+                kept.append(line if line.endswith("\n") else line + "\n")
+                # leave remaining lines as-is after this one
+                idx = lines.index(line)
+                for ln in lines[idx + 1 :]:
+                    if ln.strip():
+                        kept.append(ln if ln.endswith("\n") else ln + "\n")
+                break
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.writelines(kept)
+        except OSError as exc:
+            _logger.warning("TraceCast: export spool rewrite failed: %s", exc)
+
     def flush(self, timeout: Optional[float] = None) -> bool:
         if not self._started:
             return True
+        self._drain_spool_once()
         marker = _FlushMarker()
         deadline = None if timeout is None else time.monotonic() + timeout
         while True:
@@ -182,6 +299,10 @@ class ExportWorker:
     def shutdown(self, timeout: float = 10.0) -> None:
         if not self._started:
             return
+        self._spool_stop.set()
+        if self._spool_thread is not None:
+            self._spool_thread.join(timeout=min(2.0, timeout))
+        self._drain_spool_once()
         deadline = time.monotonic() + timeout
         while True:
             remaining = deadline - time.monotonic()
@@ -205,7 +326,7 @@ class ExportWorker:
             trace_id = getattr(item, "trace_id", "?")
         _logger.warning(
             "TraceCast: export queue full (maxsize=%d); dropped trace %s "
-            "(total_dropped=%d). Raise TRACECAST_EXPORT_QUEUE or reduce payload size.",
+            "(total_dropped=%d). Set TRACECAST_EXPORT_SPOOL or raise TRACECAST_EXPORT_QUEUE.",
             self._maxsize,
             trace_id,
             self._dropped,
@@ -215,7 +336,9 @@ class ExportWorker:
         if not batch:
             return
         try:
-            self._export_batch_fn(batch)
+            # Normalize Trace → dict on the worker thread (not request path).
+            docs = [item_to_doc(x) for x in batch]
+            self._export_batch_fn(docs)
         except Exception:
             _logger.exception("TraceCast: unexpected error in export worker")
 

@@ -36,6 +36,7 @@ class TraceReader:
         self._cache_ttl = 5.0
         self._last_read = 0.0
         self.export_stats_provider: Optional[Callable[[], dict]] = None
+        self.ingest: Any = None  # optional IngestService for POST /api/ingest
         self._dead_until: dict = {}
 
     def _mark_dead(self, exporter) -> None:
@@ -383,7 +384,7 @@ def _hydrate_trace(d: dict) -> Trace:
             name=s.get("name", ""),
             status=SpanStatus(s.get("status", "ok")),
             error=s.get("error"),
-            started_at=_parse_dt(s.get("started_at")),
+            started_at=_parse_dt(s.get("started_at")) or datetime.now(timezone.utc),
             finished_at=_parse_dt(s.get("finished_at")),
             model=s.get("model"),
             tokens_in=s.get("tokens_in", s.get("tokensIn", 0)),
