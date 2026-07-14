@@ -65,6 +65,13 @@ class MongoExporter(BaseExporter):
         self._exclude: Optional[Set[str]] = set(exclude_fields) if exclude_fields is not None else None
         self._indexed = False
 
+    # List path: keep token/count scalars, drop heavy span payloads.
+    _LIST_PROJECTION = {
+        "spans.input": 0,
+        "spans.output": 0,
+        "edges": 0,
+    }
+
     def _ensure_indexes(self) -> None:
         if self._indexed:
             return
@@ -73,6 +80,8 @@ class MongoExporter(BaseExporter):
             self._collection.create_index("trace_id", unique=True)
             self._collection.create_index([("started_at", DESCENDING)])
             self._collection.create_index([("project_id", ASCENDING), ("started_at", DESCENDING)])
+            self._collection.create_index([("project_id", ASCENDING), ("total_tokens", DESCENDING)])
+            self._collection.create_index("export_status")
             self._snapshots.create_index([("date", ASCENDING), ("project_id", ASCENDING)], unique=True)
         except Exception:
             pass
@@ -140,26 +149,67 @@ class MongoExporter(BaseExporter):
     def export(self, trace: Trace) -> None:
         self.export_doc(trace.to_dict())
 
+    def _write_payload(self, payload: dict) -> None:
+        """Upsert one doc; on BSON-too-large fall back to token summary."""
+        try:
+            self._collection.replace_one(
+                {"trace_id": payload["trace_id"]}, payload, upsert=True
+            )
+        except Exception as exc:
+            if not self._is_too_large(exc):
+                raise
+            from ..core.trace_summary import build_trace_summary
+
+            summary = build_trace_summary(payload, exc)
+            summary["exported_at"] = datetime.now(timezone.utc)
+            self._collection.replace_one(
+                {"trace_id": summary["trace_id"]}, summary, upsert=True
+            )
+
+    @staticmethod
+    def _is_too_large(exc: BaseException) -> bool:
+        name = type(exc).__name__
+        if name in ("DocumentTooLarge", "BSONError", "InvalidDocument"):
+            return True
+        msg = str(exc).lower()
+        return "too large" in msg or "document too large" in msg or "bson" in msg and "large" in msg
+
     def export_doc(self, doc: dict) -> None:
         self._ensure_indexes()
         payload = dict(doc)
         payload["exported_at"] = datetime.now(timezone.utc)
         payload = _filter_doc(payload, self._include, self._exclude)
-        self._collection.replace_one({"trace_id": payload["trace_id"]}, payload, upsert=True)
+        self._write_payload(payload)
 
     def export_docs_batch(self, docs: List[dict]) -> None:
         if not docs:
             return
         self._ensure_indexes()
         from pymongo import ReplaceOne
+
         now = datetime.now(timezone.utc)
         ops = []
+        prepared = []
         for doc in docs:
             payload = dict(doc)
             payload["exported_at"] = now
             payload = _filter_doc(payload, self._include, self._exclude)
+            prepared.append(payload)
             ops.append(ReplaceOne({"trace_id": payload["trace_id"]}, payload, upsert=True))
-        self._collection.bulk_write(ops, ordered=False)
+        try:
+            self._collection.bulk_write(ops, ordered=False)
+        except Exception as exc:
+            if not self._is_too_large(exc):
+                # Partial/other bulk failures: try per-doc so one fat doc
+                # does not erase token totals for the rest.
+                for payload in prepared:
+                    try:
+                        self._write_payload(payload)
+                    except Exception:
+                        raise exc
+                return
+            for payload in prepared:
+                self._write_payload(payload)
 
     def export_summary(self, summary: dict) -> None:
         self.export_doc(summary)
@@ -177,11 +227,13 @@ class MongoExporter(BaseExporter):
         offset: int = 0,
         sort_by: str = "date",
         order: str = "desc",
+        light: bool = True,
     ) -> List[dict]:
         match = _build_match(project_id, user_id, session_id, from_dt, to_dt, project_name=project_name)
         direction = DESCENDING if order == "desc" else ASCENDING
+        projection = self._LIST_PROJECTION if light else None
         cursor = (
-            self._collection.find(match)
+            self._collection.find(match, projection)
             .sort(sort_field(sort_by), direction)
             .skip(max(offset, 0))
             .limit(max(limit, 0))

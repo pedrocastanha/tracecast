@@ -166,12 +166,18 @@ def _make_router(reader: TraceReader, prefix: str = "") -> "APIRouter":
 
     @router.get("/api/health")
     def api_health():
+        try:
+            from importlib.metadata import version as _pkg_version
+            _ver = _pkg_version("tracecast")
+        except Exception:
+            _ver = "0.3.0"
         body = {
             "status": "ok",
-            "version": "0.3.0",
+            "version": _ver,
             "exporter": type(reader._exporters[0]).__name__ if reader._exporters else "none",
             "export": None,
             "ingest": None,
+            "priorities": ["trace_count", "tokens", "cost"],
         }
         provider = getattr(reader, "export_stats_provider", None)
         if callable(provider):
@@ -187,6 +193,20 @@ def _make_router(reader: TraceReader, prefix: str = "") -> "APIRouter":
                 body["ingest"] = {"enabled": True, "error": "stats_unavailable"}
         return body
 
+    def _require_ingest_auth(request: Request) -> None:
+        from ..core.ingest_auth import check_ingest_authorized
+
+        ok = check_ingest_authorized(
+            authorization=request.headers.get("authorization"),
+            x_token=request.headers.get("x-tracecast-token"),
+        )
+        if not ok:
+            raise HTTPException(
+                status_code=401,
+                detail="ingest auth required (X-TraceCast-Token or Bearer)",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
     def _ingest_response(docs: list):
         ingest = getattr(reader, "ingest", None)
         if ingest is None:
@@ -196,12 +216,21 @@ def _make_router(reader: TraceReader, prefix: str = "") -> "APIRouter":
         # Soft body guard: reject absurd batches early.
         if len(docs) > 200:
             raise HTTPException(status_code=413, detail="batch too large (max 200 traces)")
+        # Prefer metrics: ensure token fields exist even if spans empty/truncated.
+        for d in docs:
+            if not isinstance(d, dict):
+                continue
+            if d.get("total_tokens") is None:
+                tin = int(d.get("total_tokens_in") or 0)
+                tout = int(d.get("total_tokens_out") or 0)
+                d["total_tokens"] = tin + tout
         result = ingest.accept(docs)
         status = 202 if result.get("accepted", 0) > 0 else 503
         return JSONResponse(status_code=status, content=result)
 
     @router.post("/api/ingest")
     async def api_ingest(request: Request):
+        _require_ingest_auth(request)
         try:
             body = await request.json()
         except Exception:
@@ -211,6 +240,7 @@ def _make_router(reader: TraceReader, prefix: str = "") -> "APIRouter":
 
     @router.post("/api/ingest/batch")
     async def api_ingest_batch(request: Request):
+        _require_ingest_auth(request)
         try:
             body = await request.json()
         except Exception:

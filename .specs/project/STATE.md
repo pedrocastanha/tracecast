@@ -2,6 +2,26 @@
 
 > Decisões, blockers, lições. Atualizado a cada sessão.
 
+## Sessão 2026-07-14b — P0/P2 prod align
+
+### Prioridade de negócio
+1. **Contagem de traces** (mensagens)  
+2. **Tokens** (in/out/cached + totais)  
+3. Trace full/spans — best-effort; falha → summary_only OK  
+
+### P0
+- Ingest auth: `TRACECAST_INGEST_TOKEN` / `X-TraceCast-Token` / Bearer  
+- Mongo list projection (sem span I/O); indexes project+tokens  
+- Mongo auto-fallback summary se doc BSON too large  
+- HttpExporter: batch chunk + token env  
+- Push → GHA PyPI; VM redeploy via PyPI  
+- Mongo `--wiredTigerCacheSizeGB 0.5`  
+
+### P2
+- Sampling já via `TRACECAST_SAMPLE_RATE`  
+- Batch HTTP chunk (`TRACECAST_HTTP_BATCH_SIZE`, default 50)  
+- List projection + indexes  
+
 ## Sessão 2026-07-14 — light-http-ingest + queue/spool
 
 ### Problema
